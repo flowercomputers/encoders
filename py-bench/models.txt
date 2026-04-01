@@ -1,0 +1,8 @@
+all-MiniLM-L6-v2
+all-mpnet-base-v2
+intfloat/multilingual-e5-base
+BAAI/bge-base-en-v1.5
+average_word_embeddings_glove.6B.300d
+minishlab/M2V_base_output
+static-retrieval-mrl-en-v1
+minishlab/potion-base-32M
