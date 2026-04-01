@@ -8,7 +8,6 @@ dependencies = [
     "bm25s[core]",
     "datasets>=4.8.4",
     "einops>=0.8.2",
-    "ese-py>=0.1.0",
     "numpy>=2.4.4",
     "peft>=0.18.1",
     "sentence-transformers>=5.3.0",

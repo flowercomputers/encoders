@@ -5,14 +5,16 @@ import time
 
 import numpy as np
 from datasets import load_dataset
-from sentence_transformers import SentenceTransformer
+
+from model_loader import load_model
 
 bench_time = 10
 discard_percent = 10
 model_name = sys.argv[1]
 print(f"Benchmarking GooAQ QPS for {model_name}")
 
-model = SentenceTransformer(model_name, device="cpu", trust_remote_code=True)
+
+model = load_model(model_name)
 ds = load_dataset("sentence-transformers/gooaq", split="train")
 queries = ds["question"]
 n = len(queries)
@@ -145,7 +147,7 @@ results = {
     },
 }
 
-out_path = f"benchmarks/bench_{model_name.replace('/', '_')}.json"
+out_path = f"benchmarks/{model_name.replace('/', '_')}_bench.json"
 
 
 class NumpyEncoder(json.JSONEncoder):

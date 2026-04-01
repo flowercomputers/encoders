@@ -27,16 +27,13 @@ export RUSTFLAGS="-Ctarget-cpu=native"
 # python benchmarks
 cd api-py
 maturin build --release --interpreter python3.13
-cd ../py-bench
+cd ../benches/py
 mkdir -p benchmarks
 uv sync
-uv add --find-links ../target/wheels ese_py
-uv run bench_ours.py
-uv run bench_bm25.py
 while IFS= read -r model; do
-  uv run bench.py "$model"
+    uv run --with ../../target/wheels/ese_py-*.whl bench.py "$model"
 done < models.txt
-cd ..
-cp -r py-bench/benchmarks bench_out/py_benchmarks
+cd ../..
+cp -r benches/py/benchmarks bench_out/py_benchmarks
 
 tar -czf bench_results.tar.gz bench_out

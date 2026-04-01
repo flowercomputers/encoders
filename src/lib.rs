@@ -1,4 +1,4 @@
-mod lut;
+mod lookup;
 mod tokenizer;
 mod wordpiece;
 
@@ -11,7 +11,7 @@ mod wordpiece;
 /// let encoding = ese::encode_single("hello world");
 /// assert_eq!(encoding.len(), ese::DIMENSIONS);
 /// ```
-pub const DIMENSIONS: usize = lut::DIMENSIONS;
+pub const DIMENSIONS: usize = lookup::DIMENSIONS;
 
 /// Encodes a batch of texts into embedding vectors.
 ///
@@ -89,7 +89,7 @@ pub fn encode(
 pub fn encode_single(input: impl AsRef<str>) -> [f32; DIMENSIONS] {
     let text = input.as_ref();
     let mut vector = [0.0f32; DIMENSIONS];
-    wordpiece::accumulate(&mut vector, &lut::CLS);
+    wordpiece::accumulate(&mut vector, &lookup::CLS);
     let mut token_count = 0;
     let mut normalized = String::with_capacity(text.len());
     tokenizer::normalize_into(text, &mut normalized);
@@ -103,7 +103,7 @@ pub fn encode_single(input: impl AsRef<str>) -> [f32; DIMENSIONS] {
         1.0
     };
     let mut sep = [0.0f32; DIMENSIONS];
-    wordpiece::accumulate(&mut sep, &lut::SEP);
+    wordpiece::accumulate(&mut sep, &lookup::SEP);
     for (v, s) in vector.iter_mut().zip(sep.iter()) {
         *v = (*v + *s) * scale;
     }

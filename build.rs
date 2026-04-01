@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     env,
     fs::{self},
     path::{Path, PathBuf},
@@ -54,7 +55,7 @@ fn main() {
     let vocab_size = entries.len();
     let table_size = vocab_size.next_power_of_two();
     let table_mask = table_size - 1;
-    let num_buckets = (vocab_size / 4).max(1);
+    let num_buckets = vocab_size;
 
     // Bucket entries by primary hash
     let mut buckets: Vec<Vec<usize>> = vec![vec![]; num_buckets];
@@ -77,20 +78,26 @@ fn main() {
             continue;
         }
 
-        let mut seed: u32 = 1;
+        let mut attempts = 0;
+        let mut i: u32 = 0;
         'search: loop {
+            let seed = i | 1;
+            i += 1;
+
+            attempts += 1;
+            assert!(
+                attempts < 1_000_000,
+                "PHF construction stuck on bucket {bi} ({} entries)",
+                buckets[bi].len()
+            );
+
             let mut trial_slots: Vec<usize> = Vec::with_capacity(buckets[bi].len());
+            let mut seen = HashSet::with_capacity(buckets[bi].len());
 
             for &entry_idx in &buckets[bi] {
                 let slot =
                     (phf_hash(entries[entry_idx].0.as_bytes(), seed as u64) as usize) & table_mask;
-                if occupied[slot] || trial_slots.contains(&slot) {
-                    seed += 1;
-                    assert!(
-                        seed < 1_000_000,
-                        "PHF construction stuck on bucket {bi} ({} entries)",
-                        buckets[bi].len()
-                    );
+                if occupied[slot] || !seen.insert(slot) {
                     continue 'search;
                 }
                 trial_slots.push(slot);
@@ -137,21 +144,24 @@ fn main() {
         (global_max - global_min) / quant_max
     };
 
-    // Reorder weights into PHF slot order (zero-fill empty slots)
+    // Reorder weights into PHF slot order with verify hash prepended
+    // && zero-fill empty slots
     let zero_row = vec![0.0f32; dims as usize];
-    let mut phf_weights: Vec<u8> = Vec::with_capacity(table_size * dims as usize * dtype_sz());
+    let slot_size = 8 + dims as usize * dtype_sz();
+    let mut phf_slots: Vec<u8> = Vec::with_capacity(table_size * slot_size);
     for slot in 0..table_size {
+        phf_slots.extend_from_slice(&verify[slot].to_le_bytes());
         let row = if occupied[slot] {
             &weights[slot_to_weight[slot]]
         } else {
             &zero_row
         };
-        phf_weights.extend_from_slice(&quantize_f32_to_bytes(row, global_min, quant_scale));
+        phf_slots.extend_from_slice(&quantize_f32_to_bytes(row, global_min, quant_scale));
     }
-    fs::write(out.join("weights.bin"), &phf_weights).unwrap();
+    fs::write(out.join("weights.bin"), &phf_slots).unwrap();
 
-    // Emit seeds as [u32; NUM_BUCKETS]
-    let mut seeds_bin: Vec<u8> = Vec::with_capacity(num_buckets * 4);
+    // Emit seeds as [u64; NUM_BUCKETS]
+    let mut seeds_bin: Vec<u8> = Vec::with_capacity(num_buckets * 8);
     for &s in &seeds {
         seeds_bin.extend_from_slice(&s.to_le_bytes());
     }
@@ -180,6 +190,7 @@ pub type Param = [{dtype}; DIMENSIONS];\n\
 pub const TABLE_SIZE: usize = {table_size};\n\
 pub const TABLE_MASK: usize = {table_mask};\n\
 pub const NUM_BUCKETS: usize = {num_buckets};\n\
+pub const SLOT_SIZE: usize = 8 + DIMENSIONS * DTYPE_SIZE;\n\
 pub const UNK: Param = {unk_str};\n\
 pub const CLS: Param = {cls_str};\n\
 pub const SEP: Param = {sep_str};\n\
@@ -197,12 +208,11 @@ pub const QUANT_SCALE: f32 = {quant_scale:?};\n\
 }
 
 fn phf_hash(key: &[u8], seed: u64) -> u64 {
-    let mut h: u64 = 0xcbf29ce484222325 ^ seed;
+    let mut h = seed ^ 0x517cc1b727220a95;
     for &b in key {
-        h ^= b as u64;
-        h = h.wrapping_mul(0x100000001b3);
+        h = (h ^ b as u64).wrapping_mul(0x2127599bf4325c37);
     }
-    h
+    h ^ (h >> 32)
 }
 
 fn parse_safetensors(model_path: &PathBuf) -> (Vec<Vec<f32>>, u64) {
