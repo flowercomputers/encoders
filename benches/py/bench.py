@@ -1,5 +1,6 @@
 import inspect
 import json
+import os
 import sys
 import time
 
@@ -8,9 +9,10 @@ from datasets import load_dataset
 
 from model_loader import load_model
 
-bench_time = 10
+bench_time = int(os.environ.get("BENCH_TIME_SECONDS", "10"))
 discard_percent = 10
 model_name = sys.argv[1]
+benchmarks_dir = os.environ.get("BENCHMARKS_DIR", "benchmarks")
 print(f"Benchmarking GooAQ QPS for {model_name}")
 
 
@@ -147,7 +149,8 @@ results = {
     },
 }
 
-out_path = f"benchmarks/{model_name.replace('/', '_')}_bench.json"
+os.makedirs(benchmarks_dir, exist_ok=True)
+out_path = os.path.join(benchmarks_dir, f"{model_name.replace('/', '_')}_bench.json")
 
 
 class NumpyEncoder(json.JSONEncoder):
