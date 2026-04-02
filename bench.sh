@@ -7,7 +7,9 @@ ROOT_DIR=$(
     pwd
 )
 API_PY_DIR="$ROOT_DIR/api-py"
+API_WASM_DIR="$ROOT_DIR/api-wasm"
 PY_BENCH_DIR="$ROOT_DIR/benches/py"
+WEB_DIR="$ROOT_DIR/web"
 RESULTS_DIR="${RESULTS_DIR:-$ROOT_DIR/bench_out}"
 MODELS_FILE="${MODELS_FILE:-$PY_BENCH_DIR/models.txt}"
 PYTHON_BIN="${PYTHON_BIN:-python3.13}"
@@ -23,6 +25,7 @@ Usage: ./bench.sh <command> [options]
 Commands:
   verify           Run the lightweight Rust verification path.
   rust             Run the Rust Criterion benchmarks and collect results.
+  web              Build the browser WebAssembly benchmark demo into RESULTS_DIR/web.
   python [model]   Run the Python GooAQ benchmark for one model.
   python --all     Run the Python GooAQ benchmark for every model in MODELS_FILE.
   nanobeir [model] Run the NanoBEIR retrieval evaluation for one model.
@@ -35,11 +38,13 @@ Environment:
   RESULTS_DIR      Where collected benchmark outputs are stored. Default: bench_out
   MODELS_FILE      Model list used by --all. Default: benches/py/models.txt
   SMOKE_MODEL      Model used by python/nanobeir without arguments. Default: ours
+  WEB_PORT         Suggested local port for serving the web demo. Default: 8000
   BENCH_TIME_SECONDS
                    Optional override for benches/py/bench.py. Default: 10
 
 Notes:
   - Rust paths require only cargo and rustc.
+  - Web paths additionally require rustup, the wasm32-unknown-unknown target, and wasm-pack.
   - Python paths require uv, maturin, and the configured Python interpreter.
   - The first run downloads model assets into target/ese-cache. Benchmark runs may
     also download datasets and third-party model weights into local caches.
@@ -81,6 +86,15 @@ copy_if_exists() {
     rm -rf "$dest"
     mkdir -p "$(dirname "$dest")"
     cp -R "$src" "$dest"
+}
+
+copy_dir_contents() {
+    src=$1
+    dest=$2
+    [ -d "$src" ] || return 0
+    rm -rf "$dest"
+    mkdir -p "$dest"
+    cp -R "$src"/. "$dest"
 }
 
 find_latest_wheel() {
@@ -172,6 +186,42 @@ python_dependencies() {
     need_cmd maturin
 }
 
+ensure_rust_target() {
+    target_name=$1
+    rustup target list --installed | grep -qx "$target_name" || \
+        die "missing required Rust target: $target_name (install with: rustup target add $target_name)"
+}
+
+web_dependencies() {
+    need_cmd cargo
+    need_cmd rustup
+    need_cmd wasm-pack
+    ensure_rust_target wasm32-unknown-unknown
+}
+
+web_benchmark() {
+    web_dependencies
+
+    output_dir="$RESULTS_DIR/web"
+    reset_dir "$output_dir"
+
+    (
+        cd "$API_WASM_DIR"
+        RUSTFLAGS="${WEB_RUSTFLAGS:-}" \
+            CFLAGS_wasm32_unknown_unknown="${WEB_CFLAGS_wasm32_unknown_unknown:--mno-reference-types}" \
+            wasm-pack build --target web --release --out-dir pkg
+    )
+
+    copy_dir_contents "$WEB_DIR" "$output_dir"
+    copy_if_exists "$API_WASM_DIR/pkg" "$output_dir/pkg"
+
+    archive_results
+
+    web_port="${WEB_PORT:-8000}"
+    printf '%s\n' "Built browser demo in $output_dir"
+    printf '%s\n' "Serve it with: cd $output_dir && python3 -m http.server $web_port"
+}
+
 python_benchmarks() {
     mode=${1:-smoke}
     model_arg=${2:-}
@@ -233,6 +283,9 @@ case "$command_name" in
         ;;
     rust)
         rust_benchmarks
+        ;;
+    web)
+        web_benchmark
         ;;
     python)
         case "${2:-}" in

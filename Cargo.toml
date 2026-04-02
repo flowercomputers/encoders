@@ -16,7 +16,11 @@ resolver = "1"
 members = [
   "api-c",
   "api-py",
+  "api-wasm",
 ]
+
+[profile.release.package.ese-wasm]
+opt-level = "s"
 
 [features]
 default = ["dim-512"]

@@ -1,0 +1,14 @@
+[package]
+name = "ese-wasm"
+version = "0.1.0"
+edition = "2024"
+description = "Browser-facing WebAssembly wrapper for ese"
+repository = "https://github.com/flowercomputers/ese"
+license-file = "../license"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+ese_core = { package = "ese", path = "..", default-features = false, features = ["dim-512", "quant-8"] }
+wasm-bindgen = "0.2"

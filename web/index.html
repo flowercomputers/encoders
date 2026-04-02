@@ -1,0 +1,343 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ese browser benchmark</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        color: #111;
+        background: #fff;
+        font-family: "Times New Roman", Times, serif;
+        line-height: 1.4;
+        padding: 16px;
+      }
+
+      main {
+        max-width: 900px;
+        margin: 0 auto;
+      }
+
+      .eyebrow {
+        font-size: 1rem;
+        margin-bottom: 0.5rem;
+      }
+
+      h1 {
+        margin: 0 0 0.5rem;
+        font-size: 2rem;
+        line-height: 1.1;
+      }
+
+      .hero-copy {
+        margin: 0 0 1rem;
+      }
+
+      .hero-grid {
+        display: block;
+      }
+
+      .hero-stats {
+        margin-top: 1rem;
+      }
+
+      .stat-row {
+        display: block;
+        margin: 0.3rem 0;
+      }
+
+      .layout {
+        display: block;
+      }
+
+      .panel {
+        margin: 2rem 0;
+      }
+
+      .section-head {
+        margin-bottom: 1rem;
+      }
+
+      .section-head p {
+        margin: 0.4rem 0 0;
+      }
+
+      label {
+        display: grid;
+        gap: 8px;
+        margin: 1rem 0;
+      }
+
+      textarea,
+      input {
+        width: 100%;
+        font: inherit;
+      }
+
+      textarea {
+        min-height: 124px;
+        resize: vertical;
+      }
+
+      .controls {
+        display: block;
+      }
+
+      .metrics {
+        margin: 1rem 0;
+      }
+
+      .metric {
+        margin: 0.35rem 0;
+      }
+
+      .metric-label {
+        margin-right: 0.5rem;
+      }
+
+      .metric-value {
+        font-weight: bold;
+      }
+
+      canvas {
+        width: 100%;
+        height: auto;
+        display: block;
+        margin-top: 0.5rem;
+        border: 1px solid #999;
+        background: #fafafa;
+      }
+
+      .samples {
+        min-height: 180px;
+      }
+
+      .matrix {
+        display: grid;
+        gap: 8px;
+      }
+
+      .matrix-grid {
+        display: grid;
+        gap: 3px;
+        align-items: stretch;
+      }
+
+      .matrix-cell,
+      .matrix-label {
+        min-height: 36px;
+        padding: 4px 6px;
+        font-size: 0.9rem;
+      }
+
+      .matrix-label {
+        display: flex;
+        align-items: center;
+      }
+
+      .matrix-cell {
+        display: grid;
+        place-items: center;
+        border: 1px solid #d0d0d0;
+      }
+
+      .work-list {
+        padding-left: 1.25rem;
+      }
+
+      .work-list li {
+        margin: 0.35rem 0;
+      }
+
+      .small-note {
+        font-size: 0.95rem;
+      }
+
+      .status {
+        min-height: 1.4em;
+        margin: 0.5rem 0;
+      }
+
+      @media (max-width: 980px) {
+        body {
+          padding: 16px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="hero">
+        <div class="eyebrow">WebAssembly browser track</div>
+        <div class="hero-grid">
+          <div>
+            <h1>ese, measured where users actually click.</h1>
+            <p class="hero-copy">
+              This page keeps the benchmark, but it also turns the embedding into
+              a small browser workbench: search a corpus, inspect nearest
+              neighbors, and click around a 2D map built entirely from the local
+              WebAssembly encoder.
+            </p>
+          </div>
+          <div class="hero-stats">
+            <div class="stat-row"><span>Encoder surface</span><strong id="hero-dims">loading</strong></div>
+            <div class="stat-row"><span>Model profile</span><strong>dim-512, quant-8</strong></div>
+            <div class="stat-row"><span>Workbench surfaces</span><strong>benchmark, search, neighbors, map</strong></div>
+            <div class="stat-row"><span>Corpus size</span><strong id="hero-corpus">not built yet</strong></div>
+          </div>
+        </div>
+      </section>
+
+      <div class="layout">
+        <section class="panel">
+          <div class="section-head">
+            <h2>Benchmark</h2>
+            <p>
+              Measure repeated encoding of one sentence inside the browser. The
+              timed path stays inside WASM for the loop so the result reflects the
+              encoder rather than JavaScript allocation overhead.
+            </p>
+          </div>
+
+          <label>
+            Input text
+            <textarea id="benchmark-input">Static embeddings offer a compelling trade-off between speed and quality for retrieval tasks in constrained environments.</textarea>
+          </label>
+
+          <div class="controls">
+            <label>
+              Iterations
+              <input id="iterations" type="number" min="1" step="100" value="5000" />
+            </label>
+            <button id="run-benchmark">Run benchmark</button>
+            <button id="refresh-visual" class="secondary">Refresh visuals</button>
+          </div>
+
+          <div class="metrics">
+            <div class="metric">
+              <span class="metric-label">Total time</span>
+              <strong class="metric-value" id="metric-total">--</strong>
+            </div>
+            <div class="metric">
+              <span class="metric-label">Per encode</span>
+              <strong class="metric-value" id="metric-per">--</strong>
+            </div>
+            <div class="metric">
+              <span class="metric-label">Encodes / second</span>
+              <strong class="metric-value" id="metric-rate">--</strong>
+            </div>
+            <div class="metric">
+              <span class="metric-label">Checksum</span>
+              <strong class="metric-value" id="metric-checksum">--</strong>
+            </div>
+          </div>
+
+          <div class="status" id="benchmark-status"></div>
+
+          <div class="section-head">
+            <h3>Embedding profile</h3>
+            <p>
+              The canvas below shows the latest vector as a signed waveform.
+              Selecting a search result or a map point loads that text here.
+            </p>
+          </div>
+          <canvas id="embedding-canvas" width="960" height="280"></canvas>
+        </section>
+
+        <section class="panel">
+          <div class="section-head">
+            <h2>Corpus</h2>
+            <p>
+              Each line becomes one text the browser can index locally. You can
+              replace these with your own notes, ticket titles, search queries, or
+              short documents.
+            </p>
+          </div>
+
+          <label>
+            Corpus texts
+            <textarea id="corpus-input" class="samples"></textarea>
+          </label>
+
+          <button id="build-corpus">Build corpus index</button>
+          <button id="load-sample-corpus">Restore sample corpus</button>
+          <div class="status" id="corpus-status"></div>
+        </section>
+
+        <section class="panel">
+          <div class="section-head">
+            <h2>Semantic search</h2>
+            <p>
+              Type a query, rank the corpus by meaning, and click a result to
+              inspect what the browser thinks is nearby.
+            </p>
+          </div>
+
+          <label>
+            Query
+            <input id="query-input" type="text" />
+          </label>
+
+          <button id="run-search">Run semantic search</button>
+          <div class="status" id="search-status"></div>
+          <ol class="work-list" id="search-results"></ol>
+
+          <div class="section-head">
+            <h3>Selected item</h3>
+            <p class="small-note">
+              Clicking a result, neighbor, or map point also loads that text into
+              the embedding profile above.
+            </p>
+          </div>
+          <div class="status" id="selected-status"></div>
+
+          <div class="section-head">
+            <h3>Nearest neighbors</h3>
+            <p>
+              This is the simplest “more like this” surface: start from one text
+              and inspect what the browser places closest to it.
+            </p>
+          </div>
+          <div class="status" id="neighbor-status"></div>
+          <ol class="work-list" id="neighbor-results"></ol>
+        </section>
+
+        <section class="panel">
+          <div class="section-head">
+            <h2>2D corpus map</h2>
+            <p>
+              This is a lightweight projection, not a mathematically fancy chart.
+              It is just enough to make clusters and separations visible in a real
+              browser session.
+            </p>
+          </div>
+
+          <canvas id="map-canvas" width="960" height="420"></canvas>
+          <div class="status" id="map-status"></div>
+          <div class="status" id="map-hover"></div>
+        </section>
+
+        <section class="panel">
+          <div class="section-head">
+            <h2>Similarity snapshot</h2>
+            <p>
+              The matrix below follows the current interaction. It shows either the
+              active query against its best matches, or the selected item against
+              its nearest neighbors.
+            </p>
+          </div>
+
+          <div class="status" id="similarity-status"></div>
+          <div class="matrix" id="similarity-output"></div>
+        </section>
+      </div>
+    </main>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

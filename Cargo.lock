@@ -693,6 +693,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "ese-wasm"
+version = "0.1.0"
+dependencies = [
+ "ese",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "fastrand"
 version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

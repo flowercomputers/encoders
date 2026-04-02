@@ -111,7 +111,39 @@ Results are collected into:
 
 - `bench_out/python/gooaq`
 
-### 4. Run the lightweight NanoBEIR smoke evaluation
+### 4. Build the browser WebAssembly benchmark demo
+
+Required once on a machine:
+
+```sh
+rustup target add wasm32-unknown-unknown
+cargo install wasm-pack
+```
+
+Then build the browser demo:
+
+```sh
+./bench.sh web
+```
+
+This writes a static browser demo to:
+
+- `bench_out/web`
+
+Serve it locally with any static file server, for example:
+
+```sh
+cd bench_out/web
+python3 -m http.server 8000
+```
+
+The demo page gives you:
+
+- a browser-side WASM encode benchmark
+- a rendered waveform view of one embedding vector
+- a cosine similarity heatmap across several sample texts
+
+### 5. Run the lightweight NanoBEIR smoke evaluation
 
 ```sh
 ./bench.sh nanobeir
@@ -123,7 +155,7 @@ Results are collected into:
 
 - `bench_out/python/nanobeir`
 
-### 5. Run the default full local harness
+### 6. Run the default full local harness
 
 ```sh
 ./bench.sh all
@@ -161,6 +193,7 @@ You can also run a single explicit model:
 ```sh
 ./bench.sh verify
 ./bench.sh rust
+./bench.sh web
 ./bench.sh python [model]
 ./bench.sh python --all
 ./bench.sh nanobeir [model]
