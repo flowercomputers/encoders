@@ -677,13 +677,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ese-c"
-version = "0.1.0"
-dependencies = [
- "ese",
-]
-
-[[package]]
 name = "ese-py"
 version = "0.1.0"
 dependencies = [

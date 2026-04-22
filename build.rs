@@ -51,20 +51,19 @@ fn main() {
         }
     }
 
-    // Build perfect hash table
+    // hash table
     let vocab_size = entries.len();
     let table_size = vocab_size.next_power_of_two();
     let table_mask = table_size - 1;
     let num_buckets = vocab_size;
 
-    // Bucket entries by primary hash
+    // bucket entries by primary hash
     let mut buckets: Vec<Vec<usize>> = vec![vec![]; num_buckets];
     for (i, (token, _)) in entries.iter().enumerate() {
         let b = (phf_hash(token.as_bytes(), 0) as usize) % num_buckets;
         buckets[b].push(i);
     }
 
-    // Process largest buckets first
     let mut bucket_order: Vec<usize> = (0..num_buckets).collect();
     bucket_order.sort_by(|a, b| buckets[*b].len().cmp(&buckets[*a].len()));
 
@@ -103,7 +102,7 @@ fn main() {
                 trial_slots.push(slot);
             }
 
-            // All placed
+            // all placed
             seeds[bi] = seed;
             for (j, &entry_idx) in buckets[bi].iter().enumerate() {
                 let slot = trial_slots[j];
@@ -115,7 +114,7 @@ fn main() {
         }
     }
 
-    // Compute global min/max for quantization
+    // compute global min/max for quantization
     let (global_min, global_max) = if cfg!(feature = "quant-8") || cfg!(feature = "quant-16") {
         let mut mn = f32::INFINITY;
         let mut mx = f32::NEG_INFINITY;
@@ -144,7 +143,7 @@ fn main() {
         (global_max - global_min) / quant_max
     };
 
-    // Reorder weights into PHF slot order with verify hash prepended
+    // reorder weights into PHF slot with verify hash prepended
     // && zero-fill empty slots
     let zero_row = vec![0.0f32; dims as usize];
     let slot_size = 8 + dims as usize * dtype_sz();
@@ -160,7 +159,7 @@ fn main() {
     }
     fs::write(out.join("weights.bin"), &phf_slots).unwrap();
 
-    // Emit seeds as [u64; NUM_BUCKETS]
+    // emit seeds as [u64; NUM_BUCKETS]
     let mut seeds_bin: Vec<u8> = Vec::with_capacity(num_buckets * 8);
     for &s in &seeds {
         seeds_bin.extend_from_slice(&s.to_le_bytes());

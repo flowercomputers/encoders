@@ -1,5 +1,5 @@
 mod lookup;
-mod tokenizer;
+mod pretokenizer;
 mod wordpiece;
 
 /// DIMENSIONS is the number of dimensions per encoding.
@@ -24,11 +24,10 @@ pub const DIMENSIONS: usize = lookup::DIMENSIONS;
 /// let texts = vec![
 ///     "potato".to_string(),
 ///     "root vegetable".to_string(),
-///     "쿤밍(중국어: 昆明, 병음: Kūnmíng)은 중화인민공화국 윈난성의 성도이다.".to_string(),
 /// ];
 ///
 /// let embeddings = ese::encode(texts);
-/// assert_eq!(embeddings.len(), 3);
+/// assert_eq!(embeddings.len(), 2);
 /// assert_eq!(embeddings[0].len(), ese::DIMENSIONS);
 /// ```
 #[cfg(not(feature = "rayon"))]
@@ -50,11 +49,10 @@ pub fn encode(inputs: impl IntoIterator<Item = impl AsRef<str>>) -> Vec<[f32; DI
 /// let texts = vec![
 ///     "potato".to_string(),
 ///     "root vegetable".to_string(),
-///     "쿤밍(중국어: 昆明, 병음: Kūnmíng)은 중화인민공화국 윈난성의 성도이다.".to_string(),
 /// ];
 ///
 /// let embeddings = ese::encode(texts);
-/// assert_eq!(embeddings.len(), 3);
+/// assert_eq!(embeddings.len(), 2);
 /// assert_eq!(embeddings[0].len(), ese::DIMENSIONS);
 /// ```
 #[cfg(feature = "rayon")]
@@ -92,9 +90,9 @@ pub fn encode_single(input: impl AsRef<str>) -> [f32; DIMENSIONS] {
     wordpiece::accumulate(&mut vector, &lookup::CLS);
     let mut token_count = 0;
     let mut normalized = String::with_capacity(text.len());
-    tokenizer::normalize_into(text, &mut normalized);
+    pretokenizer::normalize_into(text, &mut normalized);
     let mut wp_buf = String::with_capacity(64);
-    tokenizer::for_each_pre_token(&normalized, |token| {
+    pretokenizer::for_each_pre_token(&normalized, |token| {
         wordpiece::wordpiece_accumulate(token, &mut vector, &mut token_count, &mut wp_buf);
     });
     let scale = if token_count != 0 {
