@@ -5,7 +5,7 @@ This repo contains a rust crate containing the static embedding model deployment
 The crate exposes two functions, `encode` and `encode_single`, take a look in `lib.rs` for more info.
 
 ### `encode`
-This accepts an array of strings, and will run them all in parallel if your environment supports `rayon`. 
+This accepts an array of strings, encoding them in parallel
 
 ### `encode_single`
 This accepts a single string
