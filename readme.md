@@ -2,7 +2,7 @@
 
 This repo contains a rust crate that implements direct lookup of bytearray to token embedding, then mean pooling to determine the whole vector. 
 
-At build time, we download the model and tokenizer from [sentence-transformers/static-retrieval-mrl-en-v1](https://huggingface.co/sentence-transformers/static-retrieval-mrl-en-v1). This is then pulled apart and built into the rust binary. The crate exposes two functions, `encode` and `encode_single`, (take a look in `lib.rs` for more info)[./src/lib.rs].
+At build time, we download the model and tokenizer from [sentence-transformers/static-retrieval-mrl-en-v1](https://huggingface.co/sentence-transformers/static-retrieval-mrl-en-v1). This is then pulled apart and built into the rust binary. The crate exposes two functions, `encode` and `encode_single`, take a look in `lib.rs` for more info.
 
 ### `encode`
 This accepts an array of strings, and will run them all in parallel if your environment supports `rayon`. 
