@@ -10,6 +10,7 @@ static TOKENIZER_URL: &'static str = "https://huggingface.co/sentence-transforme
 
 fn main() {
     let out = Path::new(&env::var("OUT_DIR").unwrap()).to_path_buf();
+    println!("cargo:rerun-if-env-changed=ESE_CACHE_DIR");
 
     let dtype = dtype();
 
@@ -395,13 +396,20 @@ fn dtype_sz() -> usize {
 }
 
 fn shared_model_dir(out: &Path) -> PathBuf {
-    let target_dir = out
-        .ancestors()
-        .find(|p| p.file_name().map_or(false, |f| f == "target"))
-        .unwrap_or_else(|| panic!("could not find target/ in OUT_DIR"))
-        .to_path_buf();
-    let dir = target_dir.join(concat!(env!("CARGO_PKG_NAME"), "-cache"));
-    fs::create_dir_all(&dir).unwrap();
+    let dir = env::var_os("ESE_CACHE_DIR")
+        .map(PathBuf::from)
+        .or_else(|| {
+            out.ancestors()
+                .find(|p| p.file_name().map_or(false, |f| f == "target"))
+                .map(|target_dir| target_dir.join(concat!(env!("CARGO_PKG_NAME"), "-cache")))
+        })
+        .unwrap_or_else(|| {
+            env::temp_dir()
+                .join("ese-cache")
+                .join(env!("CARGO_PKG_NAME"))
+        });
+    fs::create_dir_all(&dir)
+        .unwrap_or_else(|err| panic!("failed to create cache dir {}: {err}", dir.display()));
     dir
 }
 
