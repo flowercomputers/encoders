@@ -1,0 +1,14 @@
+ese
+Copyright Flower Computer Company contributors
+
+This product includes support for embedding model artifacts from
+sentence-transformers/static-retrieval-mrl-en-v1, an Apache-2.0 licensed
+static embedding model published by the Sentence Transformers project.
+
+The static-retrieval-mrl-en-v1 model card identifies Tom Aarsen as the model
+author. The model follows the static embedding approach provided through
+Sentence Transformers and model2vec.
+
+When redistributing binaries or packages that include ese-generated model
+artifacts, preserve applicable copyright, license, and notice information for
+ese and for any model artifacts distributed with the downstream package.
