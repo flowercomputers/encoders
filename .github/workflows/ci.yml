@@ -17,6 +17,7 @@ jobs:
           - ""
           - "tests"
           - "tests,quant-8"
+          - "tests,quant-16"
           - "tests,rayon,dim-256"
 
     steps:
@@ -33,7 +34,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/ese
-          key: hf-model-${{ hashFiles('build.rs') }}
+          key: ${{ matrix.os }}-hf-model-${{ hashFiles('build.rs') }}
 
       - name: Run tests (default features)
         if: matrix.features == ''
