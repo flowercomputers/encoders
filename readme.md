@@ -269,30 +269,59 @@ uv run --with ../../target/wheels/ese_py-*.whl nanobeir.py ours
 The Python harness also knows how to load models from `sentence-transformers`,
 so you can compare `ours` against entries in `benches/py/models.txt`.
 
-## Using a different static embedding model
+## Using a different model
 
-This repo does not yet expose a stable custom-model interface.
+`ese` selects the compiled model at build time via environment variables — no
+source edits required. The build script derives tokenizer facts (special tokens,
+continuation prefix, output normalization) automatically from the model
+artifacts.
 
-Today, using a different static embedding model means editing the two URLs near
-the top of `build.rs`:
+### Environment variables
 
-```rust
-static MODEL_URL: &'static str = ".../model.safetensors";
-static TOKENIZER_URL: &'static str = ".../tokenizer.json";
+| Variable | Description |
+|---|---|
+| `ESE_MODEL` | `<hf-repo>@<revision>` to compile a model from Hugging Face. The `@<revision>` is **mandatory** — bare repo IDs are rejected (reproducibility is non-negotiable). |
+| `ESE_MODEL_DIR` | Path to a local directory containing `model.safetensors` and `tokenizer.json`. No download, no checksum. |
+| `ESE_MODEL_SHA256` | Expected SHA-256 of `model.safetensors` (strongly recommended when using `ESE_MODEL`). |
+| `ESE_TOKENIZER_SHA256` | Expected SHA-256 of `tokenizer.json` (strongly recommended when using `ESE_MODEL`). |
+| `ESE_MODEL_FILE` | Override the file subpath within the repo (default: `model.safetensors`). The built-in default model uses `0_StaticEmbedding/model.safetensors`. |
+| `ESE_TOKENIZER_FILE` | Override the tokenizer subpath within the repo (default: `tokenizer.json`). |
+| `ESE_NORMALIZE_OUTPUT` | Set to `1` to L2-normalize the output embedding vector. Required for mxbai-style models. |
+
+When `ESE_MODEL_SHA256` or `ESE_TOKENIZER_SHA256` are omitted, the build
+emits a `cargo:warning` — checksums are optional for local experimentation
+but required for reproducible production builds.
+
+### WordPiece-only constraint
+
+`ese` currently compiles WordPiece vocabulary models only. The build script
+validates the tokenizer type and normalizer at compile time and emits a clear
+error for unsupported families (Unigram, BPE, etc.). Unigram and BPE support
+are planned — see `docs/rfc-generalization.md`.
+
+### Worked example: NIFE-mxbai-embed-large-v1
+
+```sh
+ESE_MODEL=stephantulkens/NIFE-mxbai-embed-large-v1@970a0151f3faeddbab5c68be38d52bbc5ea719ab \
+ESE_MODEL_SHA256=<sha256-of-model.safetensors> \
+ESE_TOKENIZER_SHA256=<sha256-of-tokenizer.json> \
+ESE_NORMALIZE_OUTPUT=1 \
+cargo build --features dim-1024
 ```
 
-The replacement model needs to match the assumptions currently baked into the
-build script and runtime:
+Replace `<sha256-of-model.safetensors>` and `<sha256-of-tokenizer.json>` with
+the SHA-256 digests computed from the downloaded files (`shasum -a 256 <file>`).
 
-- The model weights are stored in safetensors format.
-- The tensor is shaped like `[vocab_size, dimensions]`.
-- Tokenizer vocab IDs correspond to rows in the weight table.
-- The tokenizer JSON has a `model.vocab` object.
-- WordPiece continuation tokens use the `##` prefix.
-- Special token IDs are treated as `100 = UNK`, `101 = CLS`, and `102 = SEP`.
+### Using a local artifact directory
 
-If those assumptions are not true, you will probably need to modify `build.rs`,
-`src/pretokenizer.rs`, or `src/wordpiece.rs`.
+```sh
+ESE_MODEL_DIR=/path/to/my-model cargo build --features dim-256
+```
+
+The directory must contain `model.safetensors` and `tokenizer.json`. This is
+the designated seam for a future distillation pipeline: a Python
+canonicalization step can emit a transformed artifact directory that `ese`
+consumes unchanged, with no Python in the pure-Rust consumer path.
 
 ## How it works
 
@@ -321,12 +350,15 @@ without loading an ML framework in the hot path.
 ## Limitations and current status
 
 - The crate is currently a preview.
-- The default model URLs point at Hugging Face `main`, not a pinned model commit.
-- Custom model support is possible, but not yet a stable API.
+- The default model is pinned to a specific commit SHA for reproducibility.
+  Custom models require a pinned `@<revision>` for the same reason.
+- Only WordPiece vocabulary models are supported. Unigram and BPE support
+  are planned (see `docs/rfc-generalization.md`).
 - The Python wrapper is preliminary and has less documentation than the Rust
   crate.
-- `ese` does not normalize vectors for you. If your search stack expects
-  normalized vectors, normalize them before indexing or comparison.
+- `ese` does not normalize vectors by default. If your search stack expects
+  normalized vectors, set `ESE_NORMALIZE_OUTPUT=1` at build time or normalize
+  them yourself before indexing or comparison.
 - `ese` does not include persistence, indexing, filtering, or query serving.
 
 If you want a complete search system, combine `ese` with your own document
