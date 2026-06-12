@@ -18,7 +18,7 @@ Repo verification baseline (measured at `5155c13`): `cargo test` passes;
 | 003 | Pin + checksum model downloads | P1 | S | 001, 002 | DONE (merged to `advisor/improvements` at `9ba5a30`, 2026-06-12; digests independently verified in review) |
 | 004 | Small correctness batch (special tokens by name, exact scaling, portable defaults, hygiene) | P2 | M | 002 | DONE (merged to `advisor/improvements` at `931e600`, 2026-06-12; reviewed; NOTE: output magnitudes changed — cosine unaffected, dot-product consumers must re-embed) |
 | 005 | Generalization roadmap RFC + greedy-ification spike | P1 (read) | M | 002 (spike only) | DONE (merged at `431f4f8`, 2026-06-12; RFC in docs/rfc-generalization.md; spike verdict: greedy-ification NOT viable as default — native Unigram Viterbi for layer A) |
-| 006 | Manifest-driven model ingestion (ESE_MODEL env config) | P2 | M | 003, 004; design in 005 | TODO |
+| 006 | Manifest-driven model ingestion (ESE_MODEL env config) | P2 | M | 003, 004; design in 005 | DONE (merged at `0bfe5de`, 2026-06-12; reviewed; NIFE-mxbai compiles + passes parity via env config only) |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale)
@@ -45,6 +45,17 @@ REJECTED (with one-line rationale)
   are WordPiece** (v1 of plan 005 wrongly said Unigram);
   potion-multilingual-128M and multilingual-e5-base are Unigram. Plan 006's
   negative test was corrected accordingly.
+- 2026-06-12, found during 006 review (NEW small finding, fold into 007 or
+  a 006b mini-plan): potion-base-8M's published tokenizer.json is internally
+  inconsistent — model2vec compacted the vocab ([CLS]=2, [SEP]=3) but the
+  TemplateProcessing post_processor still stores the teacher's ids 101/102,
+  which in the compacted vocab are the tokens '×' and 'ß'. The reference
+  tokenizer therefore pools those rows into every encoding; ese's by-name
+  derivation picks rows 2/3 → runtime-vs-oracle cosine 0.8428 (computed,
+  matches the observed 0.8427). FIX: derive special-token ids from
+  post_processor.special_tokens[*].ids AND cross-check against vocab name
+  ids; on mismatch, fail the build naming the inconsistency. Consider
+  reporting upstream to minishlab.
 - 2026-06-12, RFC decision (spike-measured): greedy-ification fails p5
   fidelity on every language (0.73-0.91 vs the 0.97 bar) — layer A
   implements **native Unigram Viterbi**; greedy-ify is optional pass E8.
