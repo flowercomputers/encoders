@@ -27,6 +27,7 @@ Repo verification baseline (measured at `5155c13`): `cargo test` passes;
 | 005 | Generalization roadmap RFC + greedy-ification spike | P1 (read) | M | 002 (spike only) | DONE (merged at `431f4f8`, 2026-06-12; RFC in docs/rfc-generalization.md; spike verdict: greedy-ification NOT viable as default — native Unigram Viterbi for layer A) |
 | 006 | Manifest-driven model ingestion (ESE_MODEL env config) | P2 | M | 003, 004; design in 005 | DONE (merged at `0bfe5de`, 2026-06-12; reviewed; NIFE-mxbai compiles + passes parity via env config only) |
 | 007 | Reviewability cleanup (KISS pass: honest guards, dedup helpers, test indentation, doc/CI drift, specials-id cross-check) | P1 | M | 001-006 | DONE (merged at `d3c71c6`, 2026-06-12; reviewed; potion-base-8M now REJECTED at build with the id-inconsistency message — the silent-divergence class is closed) |
+| 009 | Layer-E part 1: per-row quantization + whole-word-UNK fidelity | P1 | M-L | 002, 007, 010 | TODO |
 | 010 | Distillation front-end (any HF teacher → ese artifacts; two-stage: tool + model basket) | P1 | L | 006, 008 | DONE (stage 1 merged `9d4aec8`, stage 2 merged `999acb4`, 2026-06-12; reviewed; basket: bge-base + arctic-embed-xs + all-MiniLM distill+compile+crosscheck at min cosine 1.0; XLM-R multilingual = clean fail on Sequence pre-tokenizer; BPE teacher rejected cleanly) |
 | 008 | Native Unigram runtime (Viterbi + Metaspace + compiled normalizer chain; acceptance: potion-multilingual-128M) | P1 | L | 007; RFC §4 | DONE (merged at `58d90c9`, 2026-06-12; reviewed; Viterbi semantics verified against vendored tokenizers source; one revision round: build-time MIN_SCORE const + restored doctest gated on new public `ese::IS_UNIGRAM`) |
 
@@ -77,8 +78,13 @@ REJECTED (with one-line rationale)
 - Successor plans sketched in 005, to be written after 006 + the RFC land:
   008-unigram-runtime — NOW PLANNED (see row above; remaining layer-A items
   — cased models, BPE, byte_fallback — split into later plans);
-  009-optimization-passes (layer E: prune/extend/transplant/reweight/quant)
-  — NOT YET PLANNED;
+  009 — NOW PLANNED as layer-E part 1 (per-row quant E6 + UNK fidelity);
+  remaining layer-E passes deferred with rationale: E1-E3 vocab surgery
+  (needs a concrete use case to design UX against), E4 reweight (model2vec
+  bakes it at distillation; st-static needs corpus stats + quality study),
+  E5 decase (only matters for cased models, currently rejected),
+  E7 MRL truncate (already exists as dim-* features), E8 greedy-ify
+  (spike-measured: optional pass only);
   010-distill-frontend — NOW PLANNED (see row above);
   011-emitters-wasm-and-packs (layer D) — NOT YET PLANNED.
   (Renumbered 2026-06-12 when 007 became the reviewability cleanup.)
