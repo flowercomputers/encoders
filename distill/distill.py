@@ -313,30 +313,43 @@ def _get_wordpiece_vocab(tk: dict) -> dict[str, int]:
 def _check_and_repair_padding(
     tk: dict, tokenizer_path: Path, repair: bool
 ) -> None:
-    """Repair BatchLongest padding strategy to Fixed:0.
+    """Repair any non-zero padding strategy to Fixed:0.
 
-    model2vec distilled tokenizers can retain BatchLongest padding from the
-    teacher. When model2vec.StaticModel.tokenize() uses encode_batch_fast(),
-    the tokenizer pads shorter sequences to match the longest in the batch,
-    introducing pad-token rows (id=0, [PAD]) into the mean-pool — corrupting
-    the embedding. Fix: set padding strategy to Fixed:0 (no padding).
+    model2vec distilled tokenizers can retain padding from the teacher:
+      - BatchLongest: pads to the longest sequence in each batch.
+      - Fixed:N (N>0): pads all sequences to N tokens.
+
+    In both cases, pad-token rows (id=0, [PAD]) have non-zero embeddings
+    and pollute mean pooling when the tokenizer includes them. ese's runtime
+    never pads, so we must also remove padding from the oracle tokenizer.
+    Fix: set padding strategy to Fixed:0 (no padding).
     """
     padding = tk.get("padding")
     if padding is None:
         return  # no padding configured — fine
 
     strategy = padding.get("strategy")
-    # BatchLongest is the problematic strategy
+    # Check if padding is active (BatchLongest or Fixed:N with N>0)
+    needs_repair = False
     if strategy == "BatchLongest":
+        needs_repair = True
+        old_desc = "BatchLongest"
+    elif isinstance(strategy, dict):
+        fixed_n = strategy.get("Fixed", 0)
+        if fixed_n > 0:
+            needs_repair = True
+            old_desc = f"Fixed:{fixed_n}"
+
+    if needs_repair:
         if not repair:
             _fail(
-                f"tokenizer has BatchLongest padding strategy — model2vec encode_batch_fast "
-                f"will pad shorter sequences with pad tokens and pollute mean pooling. "
+                f"tokenizer has {old_desc} padding strategy — pad-token rows (id=0, [PAD]) "
+                f"have non-zero embeddings and will pollute mean pooling. "
                 f"Run with repair=True or re-distill."
             )
         print(
-            f"  REPAIR: tokenizer padding strategy BatchLongest → Fixed:0 "
-            f"(prevents pad-token rows from polluting mean pooling in encode_batch_fast)"
+            f"  REPAIR: tokenizer padding strategy {old_desc} → Fixed:0 "
+            f"(prevents pad-token rows from polluting mean pooling)"
         )
         padding["strategy"] = {"Fixed": 0}
         tokenizer_path.write_text(json.dumps(tk, ensure_ascii=False, indent=2))
