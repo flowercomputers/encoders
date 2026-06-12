@@ -80,11 +80,19 @@ TRIPLETS = [
 # ---------------------------------------------------------------------------
 
 def encode_model2vec(artifact_dir: Path) -> np.ndarray:
-    """Encode SENTENCES via model2vec.StaticModel. Returns [N, dims] float32."""
+    """Encode SENTENCES via model2vec.StaticModel. Returns [N, dims] float32.
+
+    NOTE: encode_batch_fast (used when _can_encode_fast=True) pads shorter
+    sequences to match the longest in the batch. Padding id=0 has a non-zero
+    embedding and pollutes mean pooling. We encode one sentence at a time to
+    avoid this padding artifact and get the same result as model2vec's own
+    per-sentence tokenize()-then-mean-pool path.
+    """
     from model2vec import StaticModel
     model = StaticModel.from_pretrained(str(artifact_dir))
-    embs = model.encode(SENTENCES, show_progressbar=False)
-    return embs.astype(np.float32)
+    # Encode one at a time: avoids batch-padding pollution in encode_batch_fast.
+    rows = [model.encode(s, show_progressbar=False) for s in SENTENCES]
+    return np.array(rows, dtype=np.float32)
 
 
 # ---------------------------------------------------------------------------

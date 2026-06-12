@@ -280,6 +280,11 @@ def validate(out_dir: Path, repair: bool = False) -> None:
         )
     print(f"  vocab_size={vocab_size_tk}, dims={dims}  [OK]")
 
+    # ── Padding strategy (BatchLongest pollutes encode_batch_fast mean pool) ─────
+    _check_and_repair_padding(tk, tokenizer_path, repair)
+    # Re-read tk after possible repair
+    tk = json.loads(tokenizer_path.read_text())
+
     # ── Specials-id consistency (the model2vec compaction bug) ────────────────
     if model_type == "WordPiece":
         _check_wordpiece_specials(tk, out_dir, tokenizer_path, repair)
@@ -303,6 +308,39 @@ def _get_vocab_size(tk: dict) -> int:
 
 def _get_wordpiece_vocab(tk: dict) -> dict[str, int]:
     return {k: int(v) for k, v in tk["model"]["vocab"].items()}
+
+
+def _check_and_repair_padding(
+    tk: dict, tokenizer_path: Path, repair: bool
+) -> None:
+    """Repair BatchLongest padding strategy to Fixed:0.
+
+    model2vec distilled tokenizers can retain BatchLongest padding from the
+    teacher. When model2vec.StaticModel.tokenize() uses encode_batch_fast(),
+    the tokenizer pads shorter sequences to match the longest in the batch,
+    introducing pad-token rows (id=0, [PAD]) into the mean-pool — corrupting
+    the embedding. Fix: set padding strategy to Fixed:0 (no padding).
+    """
+    padding = tk.get("padding")
+    if padding is None:
+        return  # no padding configured — fine
+
+    strategy = padding.get("strategy")
+    # BatchLongest is the problematic strategy
+    if strategy == "BatchLongest":
+        if not repair:
+            _fail(
+                f"tokenizer has BatchLongest padding strategy — model2vec encode_batch_fast "
+                f"will pad shorter sequences with pad tokens and pollute mean pooling. "
+                f"Run with repair=True or re-distill."
+            )
+        print(
+            f"  REPAIR: tokenizer padding strategy BatchLongest → Fixed:0 "
+            f"(prevents pad-token rows from polluting mean pooling in encode_batch_fast)"
+        )
+        padding["strategy"] = {"Fixed": 0}
+        tokenizer_path.write_text(json.dumps(tk, ensure_ascii=False, indent=2))
+        print(f"  wrote repaired tokenizer.json to {tokenizer_path}")
 
 
 def _check_wordpiece_specials(
