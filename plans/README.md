@@ -77,10 +77,13 @@ REJECTED (with one-line rationale)
   it confuses readers; no code change.
 - `(CLS+SEP)` accumulation order / empty-input scaling: cosine-equivalent;
   the magnitude component is fixed by plan 004 item B.
-- Per-row quantization scales (vs the current global min/max): plausible
-  quality win for quant-8 builds, but needs measurement first — deferred as
-  an investigate item, not planned. Revisit after plan 002's thresholds make
-  quant error visible in tests.
+- Per-row quantization scales (vs the current global min/max): deferred as
+  an investigate item, but now WITH DATA (2026-06-12, measured during plan
+  002 dispatch): weights span [-151, 167] → 8-bit step ≈ 1.25; typical row
+  norm ≈ 424 but CLS/SEP rows ≈ 22 (19× smaller), so global-affine
+  quantization yields cosine 0.94 vs f32 on zero-token inputs (CLS+SEP
+  only) and ~0.997 on short text. Per-row scales would largely fix this.
+  Belongs to layer E (plan 005); affects the shipped quant-8 wheel quality.
 - api-py single-string return shape `(1, D)` vs sentence-transformers'
   `(D,)`: breaking API change; decide alongside the first real wheel
   release (noted in plan 004 maintenance).

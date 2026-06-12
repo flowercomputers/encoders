@@ -1,4 +1,4 @@
-# Plan 002: Add CI and make the parity test pass on quantized builds
+# Plan 002: Add CI and make the parity test verify quantized builds against a quantized oracle
 
 > **Executor instructions**: Follow this plan step by step. Run every
 > verification command and confirm the expected result before moving to the
@@ -7,47 +7,57 @@
 > in `plans/README.md` — unless a reviewer dispatched you and told you they
 > maintain the index.
 >
-> **Drift check (run first)**: `git diff --stat 5155c13..HEAD -- src/test/mod.rs build.rs Cargo.toml .github`
-> If `src/test/mod.rs` changed since this plan was written, compare the
-> "Current state" excerpts against the live code before proceeding; on a
-> mismatch, treat it as a STOP condition. (Changes to `build.rs` from plan
-> 001's cache-portability merge are expected — read the merged
-> `shared_model_dir()` to learn the cache path in Step 4.)
+> **Drift check (run first)**: `git diff --stat 5155c13..HEAD -- src/test/mod.rs Cargo.toml .github`
+> `src/test/mod.rs` must still match the excerpt below. Changes to
+> `build.rs` from plan 001 (cache-dir resolution) are expected and fine.
+>
+> **Revision note (2026-06-12, v2)**: v1 proposed loosening the cosine
+> threshold per quant feature. A dispatch measured the true quant-8 floor at
+> **0.9408** (not ~0.9997): inputs that normalize to zero word tokens embed
+> as CLS+SEP only, and the CLS/SEP rows (norm ≈ 22) are 19× smaller than
+> typical rows (norm ≈ 424) while the global 8-bit step is ≈ 1.25 — so
+> global-affine quantization shreds them. A 0.94-tolerant threshold would be
+> too loose to catch real regressions. v2 instead makes the **oracle
+> quantization-aware**: reference outputs are computed from
+> quantize→dequantize'd weights, so the test verifies "the runtime
+> faithfully reproduces the compiled artifact" at a tight threshold for every
+> configuration. "Quantized artifact quality vs f32" is a separate, measured
+> tradeoff (see the investigate item in `plans/README.md`).
 
 ## Status
 
 - **Priority**: P1
 - **Effort**: M
 - **Risk**: LOW
-- **Depends on**: plans/001-branch-reconciliation.md
+- **Depends on**: plans/001-branch-reconciliation.md (DONE)
 - **Category**: tests
-- **Planned at**: commit `5155c13`, 2026-06-12
+- **Planned at**: commit `5155c13`, 2026-06-12 (v2 revised same day at `a037a6b`)
 
 ## Why this matters
 
 Nothing runs this repo's tests automatically, and the one configuration that
 is actually shipped to users is broken under test today: the Python wheel
 (`api-py/Cargo.toml`) builds the core crate with `quant-8`, and
-`cargo test --features tests,quant-8` **fails** — the parity test asserts
-cosine similarity > 0.999999 against the reference model, but 8-bit
-quantization legitimately lands at ~0.9997728 (measured at commit `5155c13`,
-input index 0). The result: quantized builds are untestable, so nobody tests
-them, so the shipped configuration has zero coverage. This plan makes the
-parity threshold quantization-aware and adds a GitHub Actions workflow that
-exercises the feature matrix on every push. Every subsequent plan (pinning,
-correctness fixes, multi-model support) relies on this gate to prove it
-didn't break encoding.
+`cargo test --features tests,quant-8` fails — the parity test compares a
+quantized runtime against **unquantized f32** reference outputs with a fixed
+0.999999 cosine threshold. Quantized builds are therefore untestable, so
+nobody tests them, so the shipped configuration has zero coverage. This plan
+(a) makes the build-time oracle compute its reference outputs from the same
+quantized weights the artifact actually contains — restoring a tight
+implementation-fidelity contract for every feature combination — and
+(b) adds a GitHub Actions workflow exercising the feature matrix on every
+push. Every subsequent plan relies on this gate.
 
 ## Current state
 
+(At `a037a6b` on `advisor/improvements`.)
+
 - `src/test/mod.rs` — two tests:
-  - `test_fuzz` (always on): feeds adversarial/random strings through
+  - `test_fuzz` (always on): adversarial/random strings through
     `encode_single`, asserts no panic.
   - `test::optional::test_embeddings_match` (only with `--features tests`):
-    compares `crate::encode(TEST_INPUTS)` against `TEST_OUTPUTS` generated at
-    build time by `generate_testdata()` in `build.rs` (which mean-pools raw
-    f32 weights using the real `tokenizers` crate as oracle). The assertion,
-    at `src/test/mod.rs:73-83`:
+    compares `crate::encode(TEST_INPUTS)` against `TEST_OUTPUTS` generated
+    at build time. Assertion at `src/test/mod.rs:73-83`:
 
     ```rust
     #[test]
@@ -63,26 +73,36 @@ didn't break encoding.
     }
     ```
 
-  The reference outputs are always computed from **unquantized f32** weights,
-  while the crate under test may be built with `quant-8`/`quant-16`
-  (lossy global min/max quantization, see `build.rs` `quantize_f32_to_bytes`).
-  So the comparison is f32-reference vs quantized-runtime, and the fixed
-  `0.999999` threshold only fits the unquantized build.
+- `build.rs::generate_testdata` (bottom of the file, `#[cfg(feature = "tests")]`)
+  computes the reference: for each input, tokenize with the `tokenizers`
+  crate, then mean-pool **raw f32 rows** of `weights`:
 
-- Feature flags (root `Cargo.toml`): `dim-{1024,768,512,256,128,64,32}`,
-  `quant-8`, `quant-16`, `rayon`, `tests`. Default is `dim-512`, f32.
-- `api-py/Cargo.toml:11` — the wheel's feature set:
-  `features = ["rayon", "dim-512", "quant-8"]`.
-- There is no `.github/` directory — no CI of any kind.
-- `.cargo/config.toml` sets `rustflags=["-Ctarget-cpu=native"]` — harmless in
-  CI (native = the runner).
-- The build script downloads ~100 MB from Hugging Face on first build into a
-  shared cache dir (on master: `target/ese-cache/`; plan 001 may have moved
-  it — read `shared_model_dir()` in `build.rs` for the truth).
-- Measured baselines at `5155c13` (your numbers should be close):
-  - default features: all tests pass
-  - `--features tests`: all pass
-  - `--features tests,quant-8`: FAILS, worst cosine ≈ 0.9997728
+  ```rust
+  for &tok_id in token_ids {
+      for (v, &w) in vector
+          .iter_mut()
+          .zip(unsafe { weights.get_unchecked(tok_id as usize) }.iter())
+      {
+          *v += w
+      }
+  }
+  ```
+
+- `build.rs` quantization (main path, NOT to be modified): global min/max
+  computed over all weights; `quantize_f32_to_bytes(values, min, scale)`
+  encodes each value as `((v - min) / scale).round() as u8` (or u16);
+  the runtime dequantizes per element as
+  `QUANT_MIN + (p as f32) * QUANT_SCALE` (`src/wordpiece.rs::accumulate`).
+- Measured facts (2026-06-12, dim-512): quant-8 per-input cosines vs f32
+  reference: min 0.94082105 (inputs 2, 3, 10 — empty string, whitespace,
+  control chars: all normalize to zero word tokens → CLS+SEP-only
+  embeddings); real-text floor 0.9973. quant-16 min: 0.9999985.
+- Feature flags (root `Cargo.toml`): `dim-*`, `quant-8`, `quant-16`,
+  `rayon`, `tests`. Default `dim-512`, f32.
+- No `.github/` directory — no CI.
+- Model cache: `shared_model_dir()` in `build.rs` resolves
+  (1) `ESE_CACHE_DIR` env var, (2) `target/ese-cache` ancestor walk,
+  (3) `$TMPDIR/ese-cache/<pkg>` fallback. First build downloads ~100 MB.
 
 ## Commands you will need
 
@@ -90,77 +110,103 @@ didn't break encoding.
 |---|---|---|
 | Unit tests | `cargo test` | 1 unit test + 3 doctests pass |
 | Parity (f32) | `cargo test --features tests` | 2 tests + 3 doctests pass |
-| Parity (q8) | `cargo test --features tests,quant-8` | currently FAILS; passes after Step 2 |
-| Parity (q16) | `cargo test --features tests,quant-16` | passes after Step 2 |
+| Parity (q8) | `cargo test --features tests,quant-8` | passes after Step 1 |
+| Parity (q16) | `cargo test --features tests,quant-16` | passes after Step 1 |
 | Workspace check | `cargo check --workspace` | exit 0 |
-| YAML sanity | `python3 -c "import yaml,sys; yaml.safe_load(open('.github/workflows/ci.yml'))"` | exit 0 (use `ruby -ryaml` if PyYAML unavailable) |
+| YAML sanity | `python3 -c "import yaml,sys; yaml.safe_load(open('.github/workflows/ci.yml'))"` | exit 0 |
 
 ## Scope
 
 **In scope** (the only files you should modify/create):
-- `src/test/mod.rs`
+- `build.rs` — ONLY the `#[cfg(feature = "tests")] generate_testdata`
+  function plus one new `#[cfg(feature = "tests")]` helper. The emitted
+  artifact (`weights.bin`/`seeds.bin`/`verify.bin`/`model_constants.rs`)
+  must be byte-identical to before.
+- `src/test/mod.rs` — comment/threshold updates only as described.
 - `.github/workflows/ci.yml` (create)
-- `plans/README.md` (status row)
 
 **Out of scope** (do NOT touch):
-- `build.rs` — quantization quality itself (global vs per-row scaling) is a
-  separate investigation; this plan only makes the test honest about the
-  existing quantization error.
-- The `0.999999` unquantized threshold — do not loosen it.
-- `api-py/` — wheel publishing/CI for wheels is future work.
-- Test input list in `generate_testdata()` — adding cases is welcome
-  elsewhere, not here.
+- The quantization scheme itself (`quantize_f32_to_bytes`, global min/max,
+  `QUANT_*` constants) — improving quant quality (per-row scales) is a
+  separate investigate item with data in `plans/README.md`.
+- The unquantized behavior of the oracle — f32 builds must produce
+  identical TEST_OUTPUTS to today.
+- `api-py/`; the test input list in `generate_testdata`.
 
 ## Git workflow
 
-- Branch: `advisor/002-ci-quant-parity`
-- Commit messages: short lowercase imperative (repo style, e.g.
-  "make parity threshold quantization-aware", "add ci workflow").
+- Work and commit on your worktree's current branch (integration target is
+  `advisor/improvements`).
+- Commit messages: short lowercase imperative.
 - Do NOT push or open a PR unless the operator instructed it.
 
 ## Steps
 
-### Step 1: Measure the actual quantized similarity floor
+### Step 1: Make the oracle quantization-aware in `generate_testdata`
 
-Temporarily change the assertion in `src/test/mod.rs` to print all
-similarities (e.g. collect `sim` values and `panic!` with the minimum at the
-end), then run:
-
-- `cargo test --features tests,quant-8 -- --nocapture` → record min sim (expect ≈ 0.9997)
-- `cargo test --features tests,quant-16 -- --nocapture` → record min sim (expect ≥ 0.999999)
-
-Revert the temporary printing before Step 2. Record both numbers in your
-final report.
-
-**Verify**: you have two recorded minima.
-
-### Step 2: Make the threshold quantization-aware
-
-In `src/test/mod.rs`, inside `mod optional`, replace the hardcoded threshold
-with a feature-selected constant:
+Add a helper next to `generate_testdata` (both `#[cfg(feature = "tests")]`):
 
 ```rust
-// Reference outputs are computed from unquantized f32 weights, so quantized
-// builds legitimately deviate by the quantization error.
-const SIMILARITY_THRESHOLD: f32 = if cfg!(feature = "quant-8") {
-    0.999
-} else if cfg!(feature = "quant-16") {
-    0.99999
-} else {
-    0.999999
-};
+#[cfg(feature = "tests")]
+fn oracle_weight(w: f32, global_min: f32, quant_scale: f32) -> f32 {
+    if cfg!(feature = "quant-8") {
+        let q = (((w - global_min) / quant_scale).round() as u8).clamp(0, 255);
+        global_min + (q as f32) * quant_scale
+    } else if cfg!(feature = "quant-16") {
+        let q = (((w - global_min) / quant_scale).round() as u16).clamp(0, 65535);
+        global_min + (q as f32) * quant_scale
+    } else {
+        w
+    }
+}
 ```
 
-and use `sim > SIMILARITY_THRESHOLD` in the assertion (keep the failure
-message printing both `sim` and the threshold). Sanity-check the constants
-against Step 1's measurements: each threshold must sit at least one decade of
-error below the measured minimum (e.g. measured 0.9997 → threshold 0.999 is
-fine). If a measurement is *below* its proposed threshold, STOP (see below).
+This must mirror `quantize_f32_to_bytes` (encode) composed with the
+runtime's `accumulate` dequantization (decode) **exactly**, including the
+saturating `as` cast. Then thread `global_min` and `quant_scale` into
+`generate_testdata(...)` (they are computed in `main()` before the call)
+and apply the helper at the accumulation site:
+
+```rust
+*v += oracle_weight(w, global_min, quant_scale)
+```
+
+Note: in unquantized builds `main()` sets `(global_min, quant_scale)` to
+`(0.0, 1.0)` and `oracle_weight` returns `w` unchanged — f32 reference
+outputs must be bit-identical to before (verified below).
+
+In `src/test/mod.rs`, replace the magic-number comment with one explaining
+the contract: the reference is computed from the same
+(possibly quantized) weight table the artifact contains, so this test
+verifies that the runtime faithfully reproduces the compiled model — it
+does NOT measure quantization quality vs f32 (that is a quality tradeoff
+tracked separately). Keep the threshold at `0.999999`.
 
 **Verify**:
-- `cargo test --features tests` → pass
+- `cargo test --features tests` → pass (f32 oracle unchanged)
 - `cargo test --features tests,quant-8` → pass
 - `cargo test --features tests,quant-16` → pass
+
+**Contingency** (not a STOP): if a quant build lands below 0.999999 by
+float-accumulation noise only (measure by printing the minimum: expect
+≥ 0.9999), set a quant-only threshold of `0.9999` with a comment naming
+accumulation-order noise, and record the measured minimum in your report.
+Below 0.9999 means the oracle does not match the runtime decode path —
+that IS a STOP.
+
+### Step 2: Sanity-check the artifact is untouched
+
+Confirm your build.rs change cannot alter shipped bytes: re-run the f32 and
+quant-8 builds and compare the emitted `weights.bin` checksums before/after
+your commit (e.g. `shasum target/debug/build/ese-*/out/weights.bin` — pick
+the most recent build dir, or set a temp `CARGO_TARGET_DIR` for a clean
+before/after). If you cannot conveniently produce a before/after pair,
+satisfy this instead by demonstrating your diff touches only
+`#[cfg(feature = "tests")]` items: `git diff build.rs` shows changes only
+inside `generate_testdata`, the new helper, and the `generate_testdata`
+call site.
+
+**Verify**: one of the two demonstrations above, recorded in your report.
 
 ### Step 3: Add the CI workflow
 
@@ -173,77 +219,85 @@ Create `.github/workflows/ci.yml`:
 - Steps:
   1. `actions/checkout@v4`
   2. `dtolnay/rust-toolchain@stable`
-  3. `Swatinem/rust-cache@v2` (caches cargo registry + target)
-  4. `actions/cache@v4` for the **model cache directory** — read
-     `shared_model_dir()` in the current `build.rs` to determine the path
-     (on pre-001 master: `target/ese-cache`). Key it on a constant string
-     plus the model URL line, e.g.
-     `key: hf-model-${{ hashFiles('build.rs') }}` — coarse but correct:
-     the URLs live in build.rs, so the key rotates when they change.
-  5. Run tests: `cargo test ${{ matrix.features != '' && format('--features {0}', matrix.features) || '' }}`
-- A second job `workspace-check`: ubuntu only, `cargo check --workspace`
-  (compiles `api-py` bindings without linking a Python).
-- Keep total matrix ≤ 8 jobs. No clippy/fmt gates in this plan — the repo
-  has no lint config and retro-formatting is not this plan's call. (If you
-  notice `cargo fmt --check` happens to pass cleanly, you may add a
-  non-blocking `fmt` job; if it fails, leave it out and note it.)
+  3. `Swatinem/rust-cache@v2`
+  4. `actions/cache@v4` for the model cache: set `ESE_CACHE_DIR` to a
+     stable path (e.g. `~/.cache/ese`) via job-level `env` and cache that
+     path with `key: hf-model-${{ hashFiles('build.rs') }}` (rotates when
+     the model URLs change).
+  5. Run tests with the matrix feature string (pass `--features` only when
+     non-empty).
+- A second job `workspace-check`: ubuntu only, `cargo check --workspace`.
+- Keep total matrix ≤ 8 jobs. No clippy/fmt gates (repo has no lint
+  config; retro-formatting is not this plan's call).
 
-**Verify**: YAML sanity command from the table → exit 0. Then run the matrix
-locally as a smoke test (the four feature combos on your machine):
-each `cargo test [--features ...]` invocation → exit 0.
+**Verify**: YAML sanity command → exit 0; each of the four feature combos
+already ran green in Step 1 (`""` = plain `cargo test`; run
+`cargo test --features tests,rayon,dim-256` now too → pass).
 
 ### Step 4: Confirm the model cache is CI-cacheable
 
-Delete the cached model locally (`rm -rf <model-cache-dir>` — the directory
-you identified from `shared_model_dir()`, NOT the whole `target/`), then run
-`cargo build` once and confirm it re-downloads and builds. This proves a cold
-CI runner will succeed.
+In the WORKTREE ONLY (never the main checkout): move the local model cache
+aside (`mv target/ese-cache target/ese-cache.bak`), run `cargo build` once,
+confirm it re-downloads and builds; restore or keep the fresh download.
+Also exercise the env-var path CI will use:
+`ESE_CACHE_DIR=$PWD/target/ci-cache cargo check` → exit 0 and the directory
+is created/populated.
 
-**Verify**: `cargo build` → exit 0 with a `Downloading ...` warning line on
-first run; immediate rerun of `cargo build` → no download line.
+**Verify**: download warning on the cold build; no download on rerun;
+`ls target/ci-cache` shows `model.safetensors` and `tokenizer.json` (or the
+per-model layout — record what you see).
 
 ## Test plan
 
 This plan IS the test plan for the repo. New coverage delivered:
-- parity now enforced on `quant-8` (the shipped wheel config) and `quant-16`
+- parity enforced on `quant-8` (the shipped wheel config) and `quant-16`
+  against a quantization-faithful oracle at a tight threshold
 - CI runs fuzz + parity on two OSes × four feature sets on every push
-
-No new test functions beyond the threshold change; the matrix provides the
-coverage.
 
 ## Done criteria
 
-- [ ] `cargo test --features tests,quant-8` exits 0 (was failing at `5155c13`)
+- [ ] `cargo test --features tests,quant-8` exits 0 (was failing)
 - [ ] `cargo test --features tests,quant-16` exits 0
-- [ ] `cargo test --features tests` exits 0 (unquantized threshold unchanged at 0.999999 — `grep -n "0.999999" src/test/mod.rs` still matches)
+- [ ] `cargo test --features tests` exits 0 with TEST_OUTPUTS unchanged for
+      f32 (oracle returns `w` unchanged when unquantized)
+- [ ] Threshold in `src/test/mod.rs` is 0.999999 (or documented 0.9999
+      quant-only contingency with measured minimum in the report)
+- [ ] `git diff` on `build.rs` confined to `#[cfg(feature = "tests")]`
+      items + the `generate_testdata` call site
 - [ ] `.github/workflows/ci.yml` exists and parses as YAML
 - [ ] `cargo check --workspace` exits 0
 - [ ] No files outside the in-scope list modified (`git status`)
-- [ ] `plans/README.md` status row updated
+- [ ] `plans/README.md` status row updated (skip if reviewer maintains it)
 
 ## STOP conditions
 
 Stop and report back (do not improvise) if:
 
-- Step 1's measured quant-8 minimum is below 0.999, or quant-16 below
-  0.99999 — the quantization error is larger than the audit measured, which
-  may indicate a real quantization bug; report the measured values instead
-  of just lowering thresholds further.
+- A quant build's minimum similarity lands below 0.9999 after Step 1 — the
+  oracle's quantize→dequantize does not match the runtime decode path;
+  report per-input similarities and your helper code.
 - `src/test/mod.rs` no longer matches the excerpt (drifted).
-- `cargo check --workspace` fails for reasons unrelated to your changes
-  (e.g. pyo3/maturin environment issues) — note it and exclude the
-  workspace-check job rather than debugging Python toolchains.
-- You cannot determine the model cache path from `build.rs`.
+- Implementing the oracle requires touching anything outside
+  `#[cfg(feature = "tests")]` code in `build.rs`.
+- `cargo check --workspace` fails for reasons unrelated to your changes —
+  note it and drop the workspace-check job rather than debugging Python
+  toolchains.
 
 ## Maintenance notes
 
-- When plan 003 pins model revisions, update the CI model-cache key to the
-  pinned revision string for precise invalidation.
-- When plan 006 makes the model selectable via env var, the CI matrix should
-  gain one job per supported model profile — the cache step must then key on
-  the resolved model, not on `build.rs` alone.
-- The quant thresholds encode "expected quantization error for the current
-  model + global min/max scheme". If quantization is later improved
-  (per-row scales), tighten them.
-- Reviewer: check the workflow's matrix actually expands (a typo in matrix
-  syntax silently runs one job).
+- The parity contract is now "runtime reproduces the compiled artifact".
+  Quantization QUALITY (quant-8 vs f32: 0.94 on degenerate inputs, ~0.997
+  on short text — global-affine scales are shredded by the small-magnitude
+  CLS/SEP rows; per-row scales would fix it) is tracked as an investigate
+  item in `plans/README.md` and belongs to the optimization-pass layer
+  (plan 005, layer E). When quantization improves, this oracle follows
+  automatically since it mirrors encode+decode.
+- Plan 003 should update the CI model-cache key to the pinned revision.
+- Plan 006 (multi-model) adds per-model CI jobs; the `ESE_CACHE_DIR` env
+  approach extends naturally.
+- Plan 004 changes pooling magnitudes; this test's cosine gate is
+  magnitude-invariant, and 004 adds its own magnitude assertion for
+  unquantized builds — no interaction.
+- Reviewer: check the workflow matrix actually expands, and that the oracle
+  helper's `quant-16` arm uses u16 saturation (a copy-paste u8 clamp would
+  silently corrupt the quant-16 oracle).
