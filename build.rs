@@ -37,9 +37,17 @@ fn main() {
         .as_object()
         .expect("missing model.vocab");
 
-    let mut unk: Vec<f32> = Default::default();
-    let mut cls: Vec<f32> = Default::default();
-    let mut sep: Vec<f32> = Default::default();
+    let unk_id = special_token_id(vocab, "[UNK]")
+        .expect("tokenizer vocab is missing '[UNK]' — cannot build embedding table");
+    let cls_id = special_token_id(vocab, "[CLS]")
+        .expect("tokenizer vocab is missing '[CLS]' — cannot build embedding table");
+    let sep_id = special_token_id(vocab, "[SEP]")
+        .expect("tokenizer vocab is missing '[SEP]' — cannot build embedding table");
+
+    let zero_row_special = vec![0.0f32; dims as usize];
+    let mut unk: Vec<f32> = zero_row_special.clone();
+    let mut cls: Vec<f32> = zero_row_special.clone();
+    let mut sep: Vec<f32> = zero_row_special.clone();
 
     // Collect (token, weight_index) pairs
     let mut entries: Vec<(String, usize)> = Vec::new();
@@ -49,11 +57,12 @@ fn main() {
             continue;
         }
         entries.push((token.clone(), i));
-        match i {
-            100 => unk = weights[i].clone(),
-            101 => cls = weights[i].clone(),
-            102 => sep = weights[i].clone(),
-            _ => {}
+        if i == unk_id {
+            unk = weights[i].clone();
+        } else if i == cls_id {
+            cls = weights[i].clone();
+        } else if i == sep_id {
+            sep = weights[i].clone();
         }
     }
 
@@ -210,6 +219,13 @@ pub const QUANT_SCALE: f32 = {quant_scale:?};\n\
 
     #[cfg(feature = "tests")]
     generate_testdata(&out, &weights, dims as usize, tokenizer_path, global_min, quant_scale);
+}
+
+fn special_token_id(
+    vocab: &serde_json::Map<String, serde_json::Value>,
+    token: &str,
+) -> Option<usize> {
+    vocab.get(token).and_then(|id| id.as_u64()).map(|id| id as usize)
 }
 
 fn phf_hash(key: &[u8], seed: u64) -> u64 {

@@ -88,18 +88,14 @@ pub fn encode_single(input: impl AsRef<str>) -> [f32; DIMENSIONS] {
     let text = input.as_ref();
     let mut vector = [0.0f32; DIMENSIONS];
     wordpiece::accumulate(&mut vector, &lookup::CLS);
-    let mut token_count = 0;
+    let mut token_count: u32 = 2; // CLS + SEP
     let mut normalized = String::with_capacity(text.len());
     pretokenizer::normalize_into(text, &mut normalized);
     let mut wp_buf = String::with_capacity(64);
     pretokenizer::for_each_pre_token(&normalized, |token| {
         wordpiece::wordpiece_accumulate(token, &mut vector, &mut token_count, &mut wp_buf);
     });
-    let scale = if token_count != 0 {
-        1.0 / token_count as f32
-    } else {
-        1.0
-    };
+    let scale = 1.0 / token_count as f32;
     let mut sep = [0.0f32; DIMENSIONS];
     wordpiece::accumulate(&mut sep, &lookup::SEP);
     for (v, s) in vector.iter_mut().zip(sep.iter()) {

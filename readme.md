@@ -228,6 +228,18 @@ The optional test uses the tokenizer crate at build time to generate reference
 outputs for a small set of inputs, then checks that `ese` produces matching
 embedding directions.
 
+## Performance note
+
+For maximum throughput on your own machine, build with:
+
+```console
+RUSTFLAGS="-Ctarget-cpu=native" cargo build --release
+```
+
+Omit this flag when building distributed binaries or wheels intended to run
+on other machines — the resulting artifact may otherwise crash with SIGILL on
+CPUs that do not support the instruction extensions selected at compile time.
+
 ## Running benchmarks
 
 Run the Rust GooAQ benchmark:
