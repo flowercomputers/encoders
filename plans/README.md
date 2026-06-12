@@ -27,6 +27,7 @@ Repo verification baseline (measured at `5155c13`): `cargo test` passes;
 | 005 | Generalization roadmap RFC + greedy-ification spike | P1 (read) | M | 002 (spike only) | DONE (merged at `431f4f8`, 2026-06-12; RFC in docs/rfc-generalization.md; spike verdict: greedy-ification NOT viable as default — native Unigram Viterbi for layer A) |
 | 006 | Manifest-driven model ingestion (ESE_MODEL env config) | P2 | M | 003, 004; design in 005 | DONE (merged at `0bfe5de`, 2026-06-12; reviewed; NIFE-mxbai compiles + passes parity via env config only) |
 | 007 | Reviewability cleanup (KISS pass: honest guards, dedup helpers, test indentation, doc/CI drift, specials-id cross-check) | P1 | M | 001-006 | DONE (merged at `d3c71c6`, 2026-06-12; reviewed; potion-base-8M now REJECTED at build with the id-inconsistency message — the silent-divergence class is closed) |
+| 008 | Native Unigram runtime (Viterbi + Metaspace + compiled normalizer chain; acceptance: potion-multilingual-128M) | P1 | L | 007; RFC §4 | TODO |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale)
@@ -73,8 +74,8 @@ REJECTED (with one-line rationale)
   NIFE-mxbai is NOT access-gated (verified by direct fetch; a dispatch's
   401 was a tooling artifact) — plan 006's acceptance test stands.
 - Successor plans sketched in 005, to be written after 006 + the RFC land:
-  008-tokenizer-generality (layer A — native Unigram Viterbi + Metaspace
-  pre-tokenizer + Precompiled-normalizer strategy, per RFC §4) — NOT YET PLANNED;
+  008-unigram-runtime — NOW PLANNED (see row above; remaining layer-A items
+  — cased models, BPE, byte_fallback — split into later plans);
   009-optimization-passes (layer E: prune/extend/transplant/reweight/quant)
   — NOT YET PLANNED;
   010-distill-frontend (layer C) — NOT YET PLANNED;
