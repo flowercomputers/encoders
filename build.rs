@@ -438,11 +438,17 @@ pub const MODEL_NAME: &str = {model_name:?};\n\
 /// runtime (src/pretokenizer.rs) can handle faithfully. Anything else panics
 /// at build time with a clear message.
 ///
-/// Accepted shapes mirror what src/pretokenizer.rs implements:
-///   - model.type = "WordPiece"
-///   - normalizer: BertNormalizer{lowercase:true} or a Sequence that contains
-///     one, or absent (treated as identity — only safe for already-lowercase
-///     inputs, but not rejected here since that's a user responsibility).
+/// Accepted normalizer shapes mirror what src/pretokenizer.rs implements:
+///   - BertNormalizer{lowercase:true} (or absent lowercase, which defaults to true)
+///   - Sequence (recurse into each element)
+///   - Lowercase, NFD, StripAccents (each is a subset of what pretokenizer.rs does)
+///   - absent (null): accepted with a warning — the runtime always applies
+///     BERT-uncased normalization (lowercase + NFD + strip combining marks)
+///     regardless, so a null normalizer field is only safe for already-lowercase
+///     inputs. This is intentionally not rejected here (user responsibility).
+///
+/// Rejected: NFC, NFKC, NFKD, Replace, unknown types. These are not implemented
+/// in src/pretokenizer.rs; admitting them would silently diverge from the reference.
 ///
 /// When layer A (tokenizer generality) makes normalization config-driven,
 /// delete this guard in the same change.
@@ -457,13 +463,21 @@ fn guard_tokenizer_family(tk: &serde_json::Value, model_name: &str) {
         );
     }
 
-    // 2. Check normalizer is compatible with the BERT-uncased pretokenizer
+    // 2. Check normalizer matches what src/pretokenizer.rs implements
     check_normalizer(&tk["normalizer"], model_name);
 }
 
 fn check_normalizer(norm: &serde_json::Value, model_name: &str) {
     if norm.is_null() || *norm == serde_json::Value::Null {
-        // No normalizer declared — pass (identity; runtime handles it)
+        // No normalizer declared. The runtime always applies BERT-uncased normalization
+        // (lowercase + NFD + strip combining marks) regardless — not identity.
+        println!(
+            "cargo:warning=model '{}' has no normalizer field; the ese runtime \
+             (src/pretokenizer.rs) applies BERT-uncased normalization (lowercase + NFD + \
+             strip combining marks) unconditionally. This is only correct for \
+             already-uncased inputs.",
+            model_name
+        );
         return;
     }
     match norm["type"].as_str() {
@@ -490,54 +504,68 @@ fn check_normalizer(norm: &serde_json::Value, model_name: &str) {
             }
         }
         Some("Lowercase") => {
-            // Plain lowercase is acceptable; normalization handled in pretokenizer
+            // Plain lowercase matches pretokenizer.rs (applied unconditionally)
         }
-        Some("NFC") | Some("NFD") | Some("NFKC") | Some("NFKD") => {
-            // Unicode normalization forms are fine
+        Some("NFD") => {
+            // NFD decomposition matches pretokenizer.rs (applied unconditionally)
         }
         Some("StripAccents") => {
-            // Accent stripping is fine (matches BERT-uncased behaviour)
+            // Accent stripping matches BERT-uncased behaviour in pretokenizer.rs
         }
-        Some("Replace") => {
-            // Simple replacement rules are generally fine
-        }
-        Some(other) => {
+        Some(other @ "NFC") | Some(other @ "NFKC") | Some(other @ "NFKD")
+        | Some(other @ "Replace") | Some(other) => {
             panic!(
-                "model '{}' uses a '{}' normalizer that the ese runtime (src/pretokenizer.rs) \
-                 does not implement. Supported: BertNormalizer{{lowercase:true}}, Sequence. \
-                 See docs/rfc-generalization.md for the generalization roadmap.",
+                "model '{}' uses a '{}' normalizer that src/pretokenizer.rs does not implement \
+                 (implemented: BertNormalizer{{lowercase:true}}, Sequence, Lowercase, NFD, \
+                 StripAccents). Refusing to compile — the runtime would silently diverge from \
+                 the reference tokenizer. See docs/rfc-generalization.md for the roadmap.",
                 model_name, other
             );
         }
         None => {
-            // No type field — treat as unknown/pass
+            // No type field on a non-null normalizer object — treat as unrecognized
+            panic!(
+                "model '{}' has a normalizer object with no 'type' field; ese cannot determine \
+                 whether the runtime matches. Refusing to compile.",
+                model_name
+            );
         }
     }
 }
 
 /// Derive ADD_SPECIAL_TOKENS from the tokenizer's post_processor section.
 ///
-/// TemplateProcessing or BertProcessing that references CLS/SEP → true.
-/// Absent or no special tokens → false.
+/// BertProcessing → true (always inserts CLS/SEP).
+/// TemplateProcessing → true only when the single or pair *template* references
+///   a SpecialToken with id "[CLS]" or "[SEP]". A special_tokens map entry that
+///   no template references does not get inserted at encode time, so the
+///   specials map alone is not a reliable signal.
+/// Absent post_processor or unrecognized type → false.
+///
+/// When the template references [CLS]/[SEP], also cross-checks that
+/// post_processor.special_tokens[*].ids[0] matches the vocabulary id for the
+/// same token. A mismatch (known for model2vec-compacted vocabs) means the
+/// reference tokenizer and ese would pool different rows — refused at compile
+/// time with a clear error.
 fn derive_add_special_tokens(tk: &serde_json::Value, model_name: &str) -> bool {
     let pp = &tk["post_processor"];
     if pp.is_null() || *pp == serde_json::Value::Null {
         return false;
     }
+    let vocab = tk["model"]["vocab"].as_object();
     let pp_type = pp["type"].as_str().unwrap_or("");
     match pp_type {
         "BertProcessing" => {
-            // BertProcessing always adds CLS and SEP
+            // BertProcessing always adds CLS and SEP; cross-check ids if available
+            cross_check_special_token_ids(pp, vocab, model_name);
             true
         }
         "TemplateProcessing" => {
-            // Check if the single/pair templates reference CLS or SEP special tokens
+            // Determine CLS/SEP use from the template arrays only, not the specials map
             let single = pp["single"].as_array();
             let pair = pp["pair"].as_array();
-            let specials = pp["special_tokens"].as_object();
 
-            // Check if any template element has a SpecialToken referencing CLS/SEP
-            let template_has_specials = |arr: Option<&Vec<serde_json::Value>>| -> bool {
+            let template_has_cls_sep = |arr: Option<&Vec<serde_json::Value>>| -> bool {
                 arr.map(|items| {
                     items.iter().any(|item| {
                         item.get("SpecialToken")
@@ -549,14 +577,11 @@ fn derive_add_special_tokens(tk: &serde_json::Value, model_name: &str) -> bool {
                 }).unwrap_or(false)
             };
 
-            let uses_cls_sep = template_has_specials(single) || template_has_specials(pair)
-                || specials.map(|s| s.contains_key("[CLS]") || s.contains_key("[SEP]")).unwrap_or(false);
-
+            let uses_cls_sep = template_has_cls_sep(single) || template_has_cls_sep(pair);
             if uses_cls_sep {
-                true
-            } else {
-                false
+                cross_check_special_token_ids(pp, vocab, model_name);
             }
+            uses_cls_sep
         }
         "RobertaProcessing" => {
             // RobertaProcessing uses BOS/EOS, not CLS/SEP — treat as false
@@ -577,6 +602,52 @@ fn derive_add_special_tokens(tk: &serde_json::Value, model_name: &str) -> bool {
                 model_name, pp_type
             );
             false
+        }
+    }
+}
+
+/// Cross-check that post_processor.special_tokens[token].ids[0] matches
+/// vocab[token] for [CLS] and [SEP]. Panics on mismatch; skips when ids
+/// field is absent (template-by-name path is fine).
+fn cross_check_special_token_ids(
+    pp: &serde_json::Value,
+    vocab: Option<&serde_json::Map<String, serde_json::Value>>,
+    model_name: &str,
+) {
+    let vocab = match vocab {
+        Some(v) => v,
+        None => return, // no vocab to cross-check against
+    };
+    let specials_map = match pp["special_tokens"].as_object() {
+        Some(m) => m,
+        None => return, // BertProcessing may not have a separate specials map
+    };
+    for token in &["[CLS]", "[SEP]"] {
+        let entry = match specials_map.get(*token) {
+            Some(e) => e,
+            None => continue,
+        };
+        // ids field absent → template-by-name path, no cross-check needed
+        let ids = match entry["ids"].as_array() {
+            Some(arr) => arr,
+            None => continue,
+        };
+        let pp_id = match ids.first().and_then(|v| v.as_u64()) {
+            Some(id) => id,
+            None => continue,
+        };
+        let vocab_id = match vocab.get(*token).and_then(|v| v.as_u64()) {
+            Some(id) => id,
+            None => continue, // token absent from vocab — caught elsewhere
+        };
+        if pp_id != vocab_id {
+            panic!(
+                "model '{}' post_processor stores id {} for {} but the vocab maps {} to {} — \
+                 the tokenizer.json is internally inconsistent (known for model2vec-compacted \
+                 vocabs); refusing to compile because the reference tokenizer and ese would \
+                 pool different rows.",
+                model_name, pp_id, token, token, vocab_id
+            );
         }
     }
 }
