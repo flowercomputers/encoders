@@ -77,6 +77,44 @@ mod optional {
         d / n.max(f32::EPSILON)
     }
 
+    /// Verify quantization quality vs the ideal f32 reference.
+    /// TEST_OUTPUTS_F32 is the raw f32 oracle (no quantize→dequantize round-trip);
+    /// the runtime output reflects the quantized weights. This test measures how
+    /// faithfully the quantized model approximates the f32 model — not parity.
+    ///
+    /// Thresholds: quant-8 ≥ 0.999, quant-16 ≥ 0.999999.
+    /// Before per-row quantization, this test should FAIL on degenerate inputs
+    /// (empty/whitespace/control) where global quant error concentrates on CLS/SEP.
+    #[cfg(any(feature = "quant-8", feature = "quant-16"))]
+    #[test]
+    fn test_quantization_quality() {
+        let quality_threshold = if cfg!(feature = "quant-8") {
+            0.999_f32
+        } else {
+            0.999999_f32
+        };
+        let embeddings = crate::encode(TEST_INPUTS);
+        for (i, (f32_ref, got)) in TEST_OUTPUTS_F32.iter().zip(embeddings.iter()).enumerate() {
+            let ref_norm: f32 = f32_ref.iter().map(|x| x * x).sum::<f32>().sqrt();
+            // Zero f32 reference means the ideal output is all-zeros; verify runtime matches.
+            if ref_norm < f32::EPSILON {
+                let got_norm: f32 = got.iter().map(|x| x * x).sum::<f32>().sqrt();
+                assert!(
+                    got_norm < f32::EPSILON,
+                    "f32 reference is zero for input {i} but runtime produced non-zero (norm={got_norm})"
+                );
+                continue;
+            }
+            let sim = cosine_similarity(f32_ref, got);
+            assert!(
+                sim >= quality_threshold,
+                "quant quality for input {i} below threshold: {sim:.6} < {quality_threshold} \
+                 (input: {:?})",
+                TEST_INPUTS[i]
+            );
+        }
+    }
+
     #[test]
     fn test_embeddings_match() {
         // The reference outputs (TEST_OUTPUTS) are computed at build time from the same

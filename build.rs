@@ -1482,6 +1482,10 @@ fn generate_testdata(
 
     let mut code = String::from("const TEST_INPUTS: &[&str] = &[\n");
     let mut outputs: Vec<Vec<f32>> = Vec::new();
+    // f32_outputs: raw f32 oracle (no quantize→dequantize); used by test_quantization_quality
+    // in quant builds to measure quality vs the ideal f32 reference. In f32 builds this is
+    // identical to TEST_OUTPUTS.
+    let mut f32_outputs: Vec<Vec<f32>> = Vec::new();
 
     for &input in &inputs {
         code.push_str(&format!("    {:?},\n", input));
@@ -1493,23 +1497,34 @@ fn generate_testdata(
         } else {
             tokens.get_ids().to_vec()
         };
+
+        // Quantized oracle: quantize→dequantize each weight with GLOBAL params (current scheme).
+        // Used by test_embeddings_match to check parity between packer and runtime.
         let mut vector = vec![0.0f32; _dims];
+        // f32 oracle: raw weights, no quantization noise. Used by test_quantization_quality.
+        let mut f32_vector = vec![0.0f32; _dims];
         for &tok_id in &token_ids {
-            for (v, &w) in vector
-                .iter_mut()
-                .zip(unsafe { weights.get_unchecked(tok_id as usize) }.iter())
-            {
+            let row = unsafe { weights.get_unchecked(tok_id as usize) };
+            for (v, &w) in vector.iter_mut().zip(row.iter()) {
                 *v += oracle_weight(w, global_min, quant_scale);
+            }
+            for (v, &w) in f32_vector.iter_mut().zip(row.iter()) {
+                *v += w;
             }
         }
         let scale = if token_ids.is_empty() { 1.0 } else { 1.0 / token_ids.len() as f32 };
         for v in vector.iter_mut() {
             *v *= scale;
         }
+        for v in f32_vector.iter_mut() {
+            *v *= scale;
+        }
         if normalize_output {
             normalize_vec(&mut vector);
+            normalize_vec(&mut f32_vector);
         }
         outputs.push(vector);
+        f32_outputs.push(f32_vector);
     }
 
     code.push_str("];\n\n");
@@ -1519,6 +1534,19 @@ fn generate_testdata(
         outputs.len()
     ));
     for vec in &outputs {
+        code.push_str(&format!("    {:?},\n", vec.as_slice()));
+    }
+    code.push_str("];\n\n");
+
+    // TEST_OUTPUTS_F32: ideal f32 reference (no quantization noise).
+    // Only meaningful in quant builds; in f32 builds it equals TEST_OUTPUTS.
+    // Used by test_quantization_quality to assert cosine vs f32 reference.
+    code.push_str(&format!(
+        "const TEST_OUTPUTS_F32: &[[f32; {}]; {}] = &[\n",
+        _dims,
+        f32_outputs.len()
+    ));
+    for vec in &f32_outputs {
         code.push_str(&format!("    {:?},\n", vec.as_slice()));
     }
     code.push_str("];\n");
