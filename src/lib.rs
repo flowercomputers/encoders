@@ -126,7 +126,10 @@ pub fn encode_single(input: impl AsRef<str>) -> [f32; DIMENSIONS] {
     // ── WordPiece path (byte-for-byte identical to the original) ─────────────
     let mut vector = [0.0f32; DIMENSIONS];
     if lookup::ADD_SPECIAL_TOKENS {
-        wordpiece::accumulate(&mut vector, &lookup::CLS);
+        // CLS special token: use its per-row params.
+        // quant builds: CLS_MIN / CLS_SCALE from model_constants.rs.
+        // f32 build:    CLS_MIN=0.0, CLS_SCALE=1.0 → identity (same as before).
+        wordpiece::accumulate(&mut vector, &lookup::CLS, lookup::CLS_MIN, lookup::CLS_SCALE);
     }
     // Pre-count CLS + SEP; the SEP embedding is added after the loop.
     let mut token_count: u32 = if lookup::ADD_SPECIAL_TOKENS { 2 } else { 0 };
@@ -139,7 +142,8 @@ pub fn encode_single(input: impl AsRef<str>) -> [f32; DIMENSIONS] {
     if lookup::ADD_SPECIAL_TOKENS {
         let scale = 1.0 / token_count as f32;
         let mut sep = [0.0f32; DIMENSIONS];
-        wordpiece::accumulate(&mut sep, &lookup::SEP);
+        // SEP special token: use its per-row params.
+        wordpiece::accumulate(&mut sep, &lookup::SEP, lookup::SEP_MIN, lookup::SEP_SCALE);
         for (v, s) in vector.iter_mut().zip(sep.iter()) {
             *v = (*v + *s) * scale;
         }
