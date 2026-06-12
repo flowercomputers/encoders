@@ -127,6 +127,37 @@ For production search, you will usually precompute document embeddings, store
 them somewhere, and use a vector index or nearest-neighbor library. `ese` only
 handles embedding.
 
+## Embedding as a local primitive
+
+Because the model is static and compiled into the crate output, embedding can
+be cheap enough to call like ordinary application logic. That lets a host
+application construct semantic queries at runtime instead of only querying
+pre-built vector indexes.
+
+For example, a caller can rank a small in-memory working set directly (reusing
+the `cosine` helper from the quickstart above):
+
+```rust
+let query = ese::encode_single("urgent technical bug or production issue");
+let mut emails = vec![
+    ("deploy failed", "production deploy is returning 500s"),
+    ("lunch", "where should we eat today?"),
+    ("invoice", "can you review the vendor invoice?"),
+];
+
+emails.sort_by(|(_, a), (_, b)| {
+    let a_score = cosine(&ese::encode_single(a), &query);
+    let b_score = cosine(&ese::encode_single(b), &query);
+    b_score.total_cmp(&a_score)
+});
+```
+
+For larger corpora, precompute and index embeddings as usual. The point is that
+`ese` also makes the small, dynamic cases practical: rerank a page of search
+results, score candidate memories, filter recent messages, or expose embedding
+as a primitive inside an agent runtime without adding network latency, API
+cost, or online availability assumptions.
+
 ## Feature flags
 
 The default build is `dim-512`, unquantized, and single-threaded. All available
