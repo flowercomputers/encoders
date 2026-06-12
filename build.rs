@@ -1604,6 +1604,14 @@ fn generate_testdata(
         "multiple   spaces   between",
         "a]b[c{d}e",
         "\x00\x01\x02\x03",
+        // B1 probe: "theȝ" (U+021D yogh) — 'the' (id=1996) matches as a first piece,
+        // but '##ȝ' has no vocabulary entry, so HF WordPiece emits exactly one [UNK]
+        // (id=100) for the whole word (oracle: [CLS,UNK,SEP]). The old ese default
+        // path (SKIP_UNK=false, no scratch buffer) accumulated 'the' + [UNK] — two
+        // contributions instead of one — diverging from the reference. The unified
+        // scratch-buffer path (plan 009 item B) discards partial pieces on mid-word
+        // failure, emitting one UNK to match HF WordPiece whole-word-UNK semantics.
+        "the\u{021D}",
     ];
 
     let mut code = String::from("const TEST_INPUTS: &[&str] = &[\n");
