@@ -15,7 +15,7 @@ Repo verification baseline (measured at `5155c13`): `cargo test` passes;
 |------|-------|----------|--------|------------|--------|
 | 001 | Reconcile the five outstanding codex/* branches | P1 | S-M | — | DONE (merged to `advisor/improvements` at `ab6f2b8`, 2026-06-12; reviewed) |
 | 002 | Add CI and quantization-aware parity oracle | P1 | M | 001 | DONE (merged to `advisor/improvements` at `fa965b3`, 2026-06-12; reviewed; v2 after first dispatch STOPPED on the 0.9408 quant-8 floor) |
-| 003 | Pin + checksum model downloads | P1 | S | 001, 002 | TODO |
+| 003 | Pin + checksum model downloads | P1 | S | 001, 002 | DONE (merged to `advisor/improvements` at `9ba5a30`, 2026-06-12; digests independently verified in review) |
 | 004 | Small correctness batch (special tokens by name, exact scaling, portable defaults, hygiene) | P2 | M | 002 | TODO |
 | 005 | Generalization roadmap RFC + Unigram-oracle spike | P1 (read) | M | 002 (spike only) | TODO |
 | 006 | Manifest-driven model ingestion (ESE_MODEL env config) | P2 | M | 003, 004; design in 005 | TODO |
