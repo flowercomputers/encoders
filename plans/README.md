@@ -13,7 +13,7 @@ Repo verification baseline (measured at `5155c13`): `cargo test` passes;
 
 | Plan | Title | Priority | Effort | Depends on | Status |
 |------|-------|----------|--------|------------|--------|
-| 001 | Reconcile the five outstanding codex/* branches | P1 | S-M | — | TODO |
+| 001 | Reconcile the five outstanding codex/* branches | P1 | S-M | — | DONE (merged to `advisor/improvements` at `ab6f2b8`, 2026-06-12; reviewed) |
 | 002 | Add CI and quant-aware parity thresholds | P1 | M | 001 | TODO |
 | 003 | Pin + checksum model downloads | P1 | S | 001, 002 | TODO |
 | 004 | Small correctness batch (special tokens by name, exact scaling, portable defaults, hygiene) | P2 | M | 002 | TODO |
@@ -40,6 +40,20 @@ REJECTED (with one-line rationale)
   007-unigram-runtime (layer A) — NOT YET PLANNED;
   008-distill-frontend (layer C) — NOT YET PLANNED;
   009-runtime-model-packs (layer D) — NOT YET PLANNED.
+
+## Post-001 facts for later executors
+
+- All plan work aggregates on the `advisor/improvements` branch (user
+  decision, 2026-06-12); master stays untouched until the user merges.
+- `shared_model_dir()` in `build.rs` now resolves: (1) `ESE_CACHE_DIR` env
+  var, (2) `target/ese-cache` ancestor walk (unchanged default), (3)
+  `$TMPDIR/ese-cache/<pkg>` fallback instead of panicking. Plans 002/003
+  should key CI caching on the resolved path and emit checksums accordingly.
+- `license` is now `LICENSE` (+ `NOTICE` file); `Cargo.toml` says
+  `license-file = "LICENSE"`.
+- readme.md is the rewritten ~330-line version including the ported
+  "Embedding as a local primitive" section; `codex/agent-tier-embedding-docs`
+  and `codex/readme-rewrite` can be deleted by the operator.
 
 ## Findings considered and rejected
 
