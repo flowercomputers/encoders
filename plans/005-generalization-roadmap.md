@@ -11,6 +11,13 @@
 > hardcoded where) should still hold; if tokenization is no longer hardcoded
 > BERT-WordPiece, this roadmap is already underway — STOP and reconcile with
 > whoever did that.
+>
+> **Revision note (2026-06-12, v2)**: rewritten after a design conversation
+> from the cofounder (Cursor agent transcript) introduced the IR-triple
+> framing, the greedy-ification lever, and skeletoken. Tokenizer-type facts
+> below were verified empirically against HF on 2026-06-12 — notably,
+> `potion-base-8M` is **WordPiece**, not Unigram (the v1 plan had this
+> wrong).
 
 ## Status
 
@@ -19,160 +26,174 @@
 - **Risk**: LOW (read-mostly; spike is additive)
 - **Depends on**: plans/002-ci-and-quant-aware-parity.md (parity gate for the spike)
 - **Category**: direction
-- **Planned at**: commit `5155c13`, 2026-06-12
+- **Planned at**: commit `5155c13`, 2026-06-12 (revised same day)
 
 ## Why this matters
 
 ese today is a compiler with exactly one compilable program: it ingests the
 artifact pair (`model.safetensors` + `tokenizer.json`) of
 `sentence-transformers/static-retrieval-mrl-en-v1` and emits a zero-runtime
-static embedding library. The maintainers' stated direction (readme-rewrite
-branch: *"It is not **yet** a stable framework for plugging in arbitrary
-embedding models"*), the public positioning
-(https://www.flowercomputer.com/news/enzyme-garden/ invites external
-developers in), an external user report benchmarking ese against transformer
-alternatives and wanting quality tiers, and an in-repo attempt at a second
-model (`codex/nife-mxbai-support`) all point the same way: the
-single-model pipeline should become a general system for optimizing *any*
-embedding model. This document fixes the architecture for that path so the
-individual implementation plans (starting with plan 006) compose instead of
-accreting one-off hacks.
+static embedding library. The maintainers' stated direction (readme:
+*"does not yet expose a stable custom-model interface"*), the public
+positioning (https://www.flowercomputer.com/news/enzyme-garden/ invites
+external developers in), an external user report wanting quality tiers, an
+in-repo attempt at a second model (`codex/nife-mxbai-support`), and a
+cofounder design exploration all point the same way. This document fixes the
+architecture so the implementation plans compose instead of accreting
+one-off hacks.
+
+**The unifying frame** (from the cofounder design conversation, adopted
+here): every static embedding model — however it was trained (distilled
+from a teacher à la model2vec/NIFE, contrastively trained from scratch à la
+the HF static-embeddings recipe, or co-occurrence-based like GloVe) — is the
+same deployable artifact: a **`(TokenizerSpec, EmbeddingMatrix, PoolingSpec)`
+triple**. Training provenance is upstream and invisible at deployment. ese
+v2 is an AOT compiler whose IR is that triple: frontend loads it, optional
+optimization passes transform it, the backend emits a self-contained
+artifact, and a golden-vector verifier enforces fidelity. ese's existing
+`build.rs` is already a single-target version of this compiler.
 
 ## Current state — what is hardcoded where
-
-The pipeline has three stages; generalization = making each stage
-config-driven instead of model-specific:
 
 ```
 [HF artifacts] --build.rs--> [PHF-packed weights + codegen'd constants] --src/--> [encode()]
 ```
 
-1. **Ingestion (`build.rs`)** — hardcoded:
-   - one model URL pair (plan 003 pins it; plan 006 makes it selectable)
-   - vocab parsing assumes `tokenizer.json` `model.vocab` is a
-     `{token: id}` map — true for **WordPiece** only. **Unigram** stores
-     `vocab: [[token, score], ...]` (and needs the scores at runtime);
-     **BPE** stores `vocab` + a `merges` list.
-   - special tokens by ID (plan 004 moves to by-name; still assumes
-     `[CLS]`/`[SEP]` exist and are added)
+1. **Ingestion (`build.rs`)** — one model URL pair (plan 003 pins it; plan
+   006 makes it selectable); vocab parsing assumes `tokenizer.json`
+   `model.vocab` is a `{token: id}` map (true for WordPiece/WordLevel;
+   Unigram stores `[[token, score], ...]`; BPE adds a `merges` list);
+   special tokens hardcoded (plan 004 moves to by-name).
 2. **Runtime tokenization (`src/pretokenizer.rs`)** — hardcodes the
-   BERT-uncased normalizer: lowercase (line ~26), NFD + strip combining
-   marks, CJK char isolation, whitespace/punctuation splitting. But every
-   model's `tokenizer.json` *declares* its normalizer and pre-tokenizer
-   (e.g. `{"type": "BertNormalizer", "lowercase": true, ...}` or
-   `{"type": "Metaspace", ...}`). A cased model compiled through today's
-   pipeline would be silently lowercased — wrong embeddings, no error.
-3. **Runtime token matching (`src/wordpiece.rs`)** — hardcodes WordPiece
-   greedy longest-match with `"##"` continuation prefix (line 32) and
-   `MAX_WORD_LEN=100`. Unigram needs Viterbi over token scores; BPE needs
-   merge-rule application.
+   BERT-uncased normalizer (lowercase, NFD + strip marks, CJK isolation)
+   and whitespace/punct pre-tokenization.
+3. **Runtime token matching (`src/wordpiece.rs`)** — greedy longest-match
+   WordPiece with hardcoded `"##"` prefix. Pooling: CLS + mean + SEP
+   (magnitude semantics fixed by plan 004).
 
 Also relevant:
-- `benches/bench_encode.rs` already loads `minishlab/potion-base-8M` via the
-  `model2vec-rs` dev-dependency — i.e. the repo already contains a
-  **reference implementation (oracle) for Unigram-family static models**.
-- `benches/py/models.txt` benchmarks potion/M2V/GloVe/static-retrieval
-  models — the comparison set IS the demand list for compilable models.
+- `model2vec-rs` is already a dev-dependency (`benches/bench_encode.rs`
+  loads `minishlab/potion-base-8M`) — a built-in oracle for model2vec-family
+  models.
+- The `feature = "tests"` golden harness (build-time reference outputs via
+  the `tokenizers` crate) is the seed of the compiler's verifier.
 - The Python wheel (`api-py/`) hardcodes one model+quant config per build.
 
-## The four layers (B → A → C → D)
+## Tokenizer census (verified against HF, 2026-06-12)
 
-Ordered by dependency, not by value — each is independently shippable.
+The HF `tokenizer.json` format is the de-facto standard; targeting it covers
+essentially the whole field. Within it there are exactly **four `model`
+algorithms**, and only the `model` needs a real algorithm at runtime —
+normalizers/pre-tokenizers are composable filters, post-processors just add
+special tokens (for mean pooling: "two more rows in the bag").
 
-### Layer B — Manifest-driven model ingestion (plan 006, ready to execute)
+| `model.type` | algorithm | verified examples | runtime cost |
+|---|---|---|---|
+| WordLevel | dict lookup | GloVe exports | trivial |
+| WordPiece | greedy longest-prefix + `##` | static-retrieval-mrl-en-v1, **potion-base-8M**, **M2V_base_output**, NIFE-mxbai (BERT-family teachers) | what ese has today |
+| BPE | ordered merge-rank application | roberta/gpt-derived, modernbert embedders | merges table + rank engine |
+| Unigram | Viterbi over scored lattice | **potion-multilingual-128M** (Metaspace), **multilingual-e5-base** (Precompiled normalizer) | scores + DP |
 
-Replace "the model is a constant in build.rs" with "the model is build
-configuration": `ESE_MODEL=<hf-repo>@<revision>` (+ checksums) or a local
-artifact directory, with the current model as the pinned default. Derive
-dims/special-tokens/flags from the artifacts; **fail the build with a clear
-error** when the model needs a tokenizer family the runtime doesn't have
-yet. Absorbs the NIFE branch (its `ModelProfile`, per-model cache keys,
-optional output normalization) without its fatal flaw (one Cargo feature
-per model — features must be additive in Cargo's model; per-model features
-collide under feature unification and explode combinatorially).
+Pre-tokenizer dialects that matter: char-level+`##` (BERT), **ByteLevel**
+(`Ġ`, byte→unicode alphabet; BPE world), **Metaspace** (`▁`; SentencePiece
+world). Hard case to know about: `Precompiled` normalizers (SentencePiece
+charsmap, e.g. e5 family) are effectively unreimplementable at runtime —
+they must be folded at compile time or the model rejected.
 
-Scope guard: with only WordPiece supported, layer B alone already covers any
-BERT-vocab static model (e.g. NIFE-mxbai distillations).
+Verified consequence for sequencing: **plan 006 (layer B) alone already
+unlocks potion-base-8M, M2V_base_output, and NIFE-mxbai** — all WordPiece
+with BERT normalization. The Unigram bucket (multilingual potion, e5/xlm-r)
+is what layer A is for.
 
-### Layer A — Tokenizer-general compilation
+**Key relaxation** (cofounder conversation, adopted): static pooling is an
+order-independent mean, so the runtime only needs the *multiset* of token
+ids, not the exact sequence. This licenses compile-time tokenizer
+simplification that would be unacceptable for a transformer.
 
-Make build.rs read the `normalizer`, `pre_tokenizer`, and `model` sections
-of `tokenizer.json` and emit a matching runtime configuration
-(codegen'd constants/tables, same zero-runtime philosophy):
+## The architecture: 5-stage compiler over the IR triple
 
-- **Normalizer**: map the declared chain (BertNormalizer fields, Lowercase,
-  NFD/NFC/NFKC, StripAccents, Replace, Prepend...) onto a small set of
-  compile-time flags consumed by `pretokenizer.rs`. Unsupported component →
-  build error naming it.
-- **Pre-tokenizer**: Whitespace/BertPreTokenizer (today's behavior),
-  Metaspace (SentencePiece-style, for Unigram models), ByteLevel (BPE).
-- **Model**:
-  - WordPiece — today's `wordpiece.rs` (parameterize the `##` prefix and
-    max word length from the JSON instead of hardcoding).
-  - **Unigram — the high-value add**: vocab with log-prob scores packed into
-    the existing PHF (score alongside the weight row), Viterbi
-    longest-segmentation at runtime. This unlocks the entire
-    model2vec/potion family — the models this repo already benchmarks
-    against.
-  - BPE — defer unless a concrete model demands it (merge tables are a
-    different runtime shape; byte-level pretok touches normalization too).
+- **Frontend**: weight loader (safetensors → matrix; ese has this) +
+  tokenizer loader (`tokenizer.json` → typed, validated `TokenizerSpec`).
+- **IR**: `(TokenizerSpec, EmbeddingMatrix, PoolingSpec)`. `PoolingSpec` =
+  `mean | weighted(zipf/idf) | sif` + how specials count (plan 004 fixed
+  the denominator semantics — the IR must carry them explicitly).
+- **Optimization passes (IR → IR)** — the differentiated-value layer, all
+  cheap because the model is a row table: vocab **prune** (drop rows absent
+  from a target corpus), **extend** (add domain words/phrases, init by
+  mean-pooling their subword rows), **transplant** (swap tokenizers,
+  re-derive rows over the new tokens' decompositions — exact under mean
+  pooling), **reweight** (bake Zipf/IDF into rows), **decase/fold
+  normalization** (bake lowercasing into vocab keys, shrink the runtime
+  normalizer), **quantize** (upgrade global affine → per-dimension scales;
+  optionally binary+Hamming for retrieval) + MRL truncation.
+- **Backend**: PHF builder (keep CHD), tokenizer codegen (see the design
+  question below), emitters — Rust crate (today), **wasm (headline target:
+  CPU-only, small blob, browser/edge/lambda)**, C header, and an mmap-able
+  flat pack (`bake` vs `load` are opposite deployment shapes; offer both —
+  layer D).
+- **Verifier**: every compiled artifact must reproduce reference
+  `SentenceTransformer.encode()` within cosine ≥ threshold (and, post plan
+  004, raw-vector magnitude parity for unquantized builds). Without this
+  contract, "compile any model" is unshippable — tokenizer divergence is
+  invisible until retrieval quality silently tanks. Document the one known
+  probabilistic edge: PHF OOV lookups are rejected by a 64-bit verify hash,
+  so false positives are astronomically rare but nonzero.
 
-Verification oracle: `model2vec-rs` (already a dev-dep) — encode the same
-inputs through ese-compiled potion vs model2vec-rs at f32, require cosine
-≥ 0.999999 AND relative L2 < 1e-4 (same gates as plans 002/004).
+### The load-bearing design question: one matcher or four?
 
-### Layer C — Distillation front-end ("any model" literally)
+Two candidate architectures for tokenizer generality; **the RFC must decide,
+and the spike (Step 3) provides the data**:
 
-ese's input format is model2vec's *output* format. A small companion tool —
-recommended: `distill/` Python project managed like `benches/py` (uv,
-pyproject) — that wraps `model2vec.distill` so that:
+1. **Per-family runtimes**: implement Unigram Viterbi (and later BPE
+   merge-rank) in Rust alongside the existing WordPiece matcher. Faithful;
+   more runtime code, more codegen paths, Precompiled normalizers still
+   unsolved.
+2. **Greedy-ification (compile-time transform)**: use
+   [skeletoken](https://github.com/stephantul/skeletoken) (Python; Pydantic
+   models of `tokenizer.json`; verified API: `decase_vocabulary()`,
+   `make_model_greedy()`, vocab edits with merge-table repair; round-trips
+   through `tokenizers`) to convert BPE/Unigram models into greedy
+   longest-match form at compile time. The runtime then needs exactly ONE
+   matcher — ese's existing one — plus ~2 extra pre-tokenizer dialects
+   (ByteLevel alphabet map, Metaspace). Pay a tokenization-fidelity cost at
+   compile time; the verifier measures exactly how much cosine it costs.
+   Couples naturally with the transplant/extend passes (re-deriving rows
+   after changing segmentation recovers fidelity).
 
-```
-ese-distill <any-hf-embedding-model> --out artifacts/   # teacher → static artifacts
-ESE_MODEL_DIR=artifacts cargo build --release           # artifacts → compiled library
-```
+If (2)'s fidelity cost is acceptable, layer A shrinks from "implement two
+tokenizer algorithms + dialects" to "implement two pre-tokenizer dialects +
+a canonicalization step". Caveats the RFC must address honestly:
 
-turns *any* HF embedding model (transformer or static) into an ese build.
-Quality gates reuse the existing harness: `benches/py/nanobeir.py` for
-NanoBEIR scores, published per-model in a quality/speed tier table. This is
-also the honest answer to the external user report (static ≈ 87% of a small
-transformer's retrieval quality): better teachers and tuned distillation
-move that number; tiers let users choose.
+- Greedy-ifying Unigram changes the token *multiset*, not just order — the
+  cosine cost is an empirical, per-model, per-language question.
+  Multilingual models (the main reason Unigram matters) may be hit hardest
+  on non-whitespace scripts; the spike must measure non-English inputs.
+- skeletoken introduces Python into the model-compilation path. Design
+  constraint: the Python phase runs **once per model**, emitting a
+  canonical spec consumable by `build.rs` — pure-Rust consumers never run
+  Python for already-canonicalized models (the default model ships
+  pre-canonicalized; `ESE_MODEL_DIR` from plan 006 is the natural seam).
+- skeletoken's tokenizer hashing (the cache-key/equivalence idea) is
+  **roadmap-only, not implemented** (verified 2026-06-12) — don't make the
+  artifact cache depend on it.
 
-NIFE-mxbai (a third party hand-distilling mxbai into ese-consumable form)
-is evidence this workflow is wanted; layer C productizes it.
-
-### Layer D — Runtime-loadable model packs (distribution unlock)
-
-Compile-time baking stays the flagship. But one pip wheel / one wasm bundle
-per model contradicts "any model" for Python/JS consumers. Define
-`.esepack` = the already-emitted artifacts (`weights.bin`, `seeds.bin`,
-`verify.bin` + a constants header) in one file; add a feature-gated runtime
-loader. Two costs to design around (RFC must address):
-- alignment: `src/lookup.rs` transmutes `include_bytes!` data to
-  `&[Slot; TABLE_SIZE]` via `#[repr(C, align(8))]` statics — a runtime
-  loader must copy into an aligned allocation (or use an aligned mmap) and
-  bounds-check the header.
-- types: `DIMENSIONS` is `const` and the API returns `[f32; DIMENSIONS]`;
-  runtime packs imply `Vec<f32>`/slices — keep the static API untouched and
-  add a separate `ese::dynamic` module/type so existing consumers see zero
-  change.
-
-### Sequencing and what NOT to do
+### Layers and sequencing
 
 ```
 001-004 (hygiene, CI, pinning)
-  → B (plan 006)            [S/M — covers all WordPiece static models]
-  → A (Unigram first)       [L — covers potion/model2vec family]
-  → C (distill front-end)   [M — covers ANY teacher model]
-  → D (runtime packs)       [M — distribution; parallel with C]
+  → B (plan 006: manifest ingestion)   [M — already unlocks potion-base-8M, M2V, NIFE-mxbai]
+  → A (tokenizer generality)           [size depends on the matcher decision above]
+  → E (optimization passes: prune/extend/transplant/reweight/quant)  [M, incremental, high product value]
+  → C (distillation front-end: wrap model2vec/pynife so ANY teacher → triple)  [M]
+  → D (emitters: wasm headline, C header, mmap packs)                [M]
 ```
 
-Non-goals (state them in the RFC so they stay decided): no transformer
-inference at runtime (that's the moat — ese stays a static-table engine);
-no training framework; no vector DB. Quality limits of static embeddings
-(word-order/negation blindness, per the external report) are inherent —
-the answer is tiers + distillation quality, not architecture changes.
+C and D are parallelizable after B; E can start as soon as the IR boundary
+exists (each pass is independent). Non-goals (state in the RFC so they stay
+decided): no transformer inference at runtime; no training framework; no
+vector DB. Static-embedding quality limits (word-order/negation blindness)
+are inherent — the answer is tiers, distillation quality, and vocab surgery
+(phrase rows attack fragmentation directly), not architecture changes.
 
 ## Commands you will need
 
@@ -180,121 +201,147 @@ the answer is tiers + distillation quality, not architecture changes.
 |---|---|---|
 | Parity gate | `cargo test --features tests` | all pass |
 | Oracle present | `grep -n "model2vec_rs" benches/bench_encode.rs` | match |
-| Inspect a Unigram tokenizer | `python3 -c "import json,urllib.request; t=json.load(urllib.request.urlopen('https://huggingface.co/minishlab/potion-base-8M/resolve/main/tokenizer.json')); print(t['model']['type'], t['normalizer'], t['pre_tokenizer'])[:1]"` (adapt freely) | prints `Unigram` + declared components |
+| Inspect a tokenizer | `curl -sL https://huggingface.co/<repo>/resolve/main/tokenizer.json \| python3 -c "import json,sys; t=json.load(sys.stdin); print(t['model']['type'], (t.get('normalizer') or {}).get('type'), (t.get('pre_tokenizer') or {}).get('type'))"` | prints the three types |
 
 ## Scope
 
 **In scope**:
 - `docs/rfc-generalization.md` (create — the RFC)
-- `benches/` or a new `spikes/` dir for the Step 3 spike (throwaway,
-  clearly marked, not wired into default builds)
+- A throwaway spike under `examples/` or `benches/` (clearly marked, not
+  wired into default builds)
 - `plans/README.md` (status row)
 
 **Out of scope** (do NOT do as part of this plan):
 - Any change to `src/` or `build.rs` behavior — implementation belongs to
   plan 006 and successors.
-- Building layer A/C/D themselves.
+- Building layers A/C/D/E themselves.
+- Adding skeletoken or any Python tooling to the build — spike-side
+  experimentation only.
 
 ## Git workflow
 
-- Branch: `advisor/005-generalization-rfc`
+- Branch: work on `advisor/improvements` (the project's integration branch)
+  or a child of it.
 - Commit style: short lowercase imperative.
 - Do NOT push or open a PR unless the operator instructed it.
 
 ## Steps
 
-### Step 1: Catalog the target models' tokenizer configs
+### Step 1: Complete the tokenizer support matrix
 
-For each of: `minishlab/potion-base-8M`, `minishlab/potion-multilingual-128M`,
-`minishlab/M2V_base_output`, `sentence-transformers/static-retrieval-mrl-en-v1`,
-`stephantulkens/NIFE-mxbai-embed-large-v1` — download `tokenizer.json`
-(HF `resolve/main` URLs) and record: `model.type`, normalizer chain,
-pre-tokenizer chain, special/added tokens, vocab representation, and for
-Unigram whether scores are present. Produce the support matrix table for the
-RFC (which layer-A components each model requires).
+Extend the verified census above to the full benchmark set
+(`benches/py/models.txt`) plus NIFE-mxbai: for each model record
+`model.type`, normalizer chain, pre-tokenizer chain, post-processor /
+special tokens, vocab representation, and (Unigram) score presence. Already
+verified 2026-06-12: potion-base-8M (WordPiece/BertNormalizer),
+potion-multilingual-128M (Unigram/Sequence/Metaspace), M2V_base_output
+(WordPiece/BertNormalizer), static-retrieval-mrl-en-v1 (WordPiece),
+multilingual-e5-base (Unigram/Precompiled/Sequence). Produce the
+support-matrix table for the RFC with a "blocked on" column (which layer or
+pass each model needs).
 
-**Verify**: the RFC draft contains a table with ≥ 5 rows and columns
-(model, tokenizer type, normalizer, pre-tokenizer, blocked-on).
+**Verify**: the RFC draft contains the table with ≥ 8 rows.
 
 ### Step 2: Write the RFC
 
-`docs/rfc-generalization.md` covering: the four layers as specified above
-(copy/adapt freely), the support matrix from Step 1, the build-config
-interface decision (env vars vs manifest file — recommend: env vars
-`ESE_MODEL`, `ESE_MODEL_DIR`, `ESE_MODEL_SHA256`,... with a documented
-default; record why per-model Cargo features were rejected: Cargo features
-must be additive, per-model features collide under unification), the
-`.esepack`/alignment notes for layer D, the oracle strategy
-(tokenizers crate for WordPiece parity, model2vec-rs for Unigram parity,
-NanoBEIR for quality), and open questions (BPE demand, multilingual
-normalization coverage, who hosts distilled artifacts).
+`docs/rfc-generalization.md` covering: the IR triple and 5-stage
+architecture (adapt freely from this plan), the support matrix, the
+**matcher decision** (per-family runtimes vs greedy-ification) presented
+with the spike data from Step 3 and a recommendation, the two-phase
+compile / canonical-spec boundary (Python skeletoken phase ↔ Rust backend;
+constraint: no Python in the consumer path), the build-config interface
+(env vars per plan 006; record why per-model Cargo features were rejected:
+features must be additive, per-model features collide under unification),
+the optimization-pass layer E with the four vocab-surgery passes, emitter
+priorities (wasm headline; mmap pack alignment notes: `src/lookup.rs`
+transmutes to `#[repr(C, align(8))]` statics, a runtime loader must copy
+into aligned memory and bounds-check; keep the static API and add a
+separate dynamic module), the verifier contract (cosine + magnitude gates,
+PHF OOV note), and open questions (BPE demand timeline, Precompiled
+normalizer handling, who hosts canonicalized/distilled artifacts).
 
-**Verify**: `test -f docs/rfc-generalization.md` and it contains sections
-matching: `grep -c "^## " docs/rfc-generalization.md` → ≥ 6.
+**Verify**: `test -f docs/rfc-generalization.md`;
+`grep -c "^## " docs/rfc-generalization.md` → ≥ 7.
 
-### Step 3: Spike — prove the Unigram oracle path
+### Step 3: Spike — measure the greedy-ification fidelity cost on a real Unigram model
 
-Goal: de-risk layer A's hardest claim ("we can match model2vec's Unigram
-encoding"). Write a throwaway Rust test or example (e.g.
-`benches/spike_unigram_oracle.rs` as a `[[bench]]`-less dev target or an
-`examples/` file): load `minishlab/potion-base-8M` via `model2vec-rs` AND
-via the `tokenizers` crate (both already in dev/build deps), encode ~10
-fixed sentences with (a) model2vec-rs `encode()` and (b) your own
-mean-pool over `tokenizers`-produced token IDs against the model's
-embedding matrix — confirm (a)≡(b) within float noise (cosine ≥ 0.999999).
-This proves the runtime semantics ese must replicate are "tokenize +
-mean-pool" with no hidden steps (or discovers the hidden steps — e.g.
-model2vec applies an output norm — which is precisely what the spike is
-for; document whatever you find in the RFC).
+This replaces v1's "Unigram oracle" spike and answers the load-bearing
+question with data. Target model: **`minishlab/potion-multilingual-128M`**
+(static, Unigram, Metaspace — verified). Procedure (Python, throwaway, may
+live in `benches/py/` style with uv; do not add deps to the Rust crate):
 
-**Verify**: `cargo test --features tests <spike test name>` (or `cargo run
---example spike_unigram_oracle`) → prints per-sentence cosine, all
-≥ 0.999999, exit 0. Paste the output into the RFC appendix.
+1. Baseline: encode a fixed multilingual input set (≥200 sentences spanning
+   English + at least 3 non-whitespace/non-Latin-script languages — e.g.
+   zh, ja, th — plus some code/identifiers) with the reference
+   (`model2vec` Python or `sentence-transformers` loading the model).
+2. Greedy-ify: load the model's `tokenizer.json` with skeletoken, apply
+   `make_model_greedy()` (plus `decase_vocabulary()` if applicable),
+   re-serialize, and encode the same inputs by: tokenize with the
+   transformed tokenizer (`tokenizers` lib) → mean-pool rows from the
+   model's embedding matrix (mirroring the reference pooling incl. any
+   output normalization the reference applies — discover and document).
+3. Report per-language cosine distributions (min/p5/median) between
+   baseline and greedy-ified encodings.
+
+Decision thresholds for the RFC recommendation: median ≥ 0.99 and p5 ≥ 0.97
+per language → greedy-ification is viable as the default path (with
+per-family runtimes as a fallback for high-fidelity needs); below that →
+layer A implements Unigram Viterbi natively and greedy-ification becomes an
+optional optimization pass. Either way the numbers go in the RFC appendix.
+
+**Verify**: the spike script runs end-to-end and emits the per-language
+table; numbers pasted into the RFC appendix.
 
 ### Step 4: File the follow-up plan stubs
 
-Append to `plans/README.md` under "Dependency notes" the planned successor
-plans with one-line scopes: `007-unigram-runtime (layer A)`,
-`008-distill-frontend (layer C)`, `009-runtime-model-packs (layer D)` —
-status `NOT YET PLANNED`, so the next `/improve` run reconciles instead of
-re-auditing.
+Append to `plans/README.md` under "Dependency notes" the successor plans
+with one-line scopes reflecting the RFC's decision:
+`007-tokenizer-generality (layer A — approach per RFC §matcher-decision)`,
+`008-optimization-passes (layer E)`, `009-distill-frontend (layer C)`,
+`010-emitters-wasm-and-packs (layer D)` — status `NOT YET PLANNED`.
 
-**Verify**: `grep -c "NOT YET PLANNED" plans/README.md` → ≥ 3.
+**Verify**: `grep -c "NOT YET PLANNED" plans/README.md` → ≥ 4.
 
 ## Test plan
 
-The spike (Step 3) is the test: a machine-checkable demonstration that the
-Unigram oracle path works. No production tests change.
+The spike (Step 3) is the test: a machine-checkable measurement of the
+riskiest assumption. No production tests change.
 
 ## Done criteria
 
-- [ ] `docs/rfc-generalization.md` exists with support matrix + 4 layers +
-      non-goals + open questions
-- [ ] Spike runs and its cosine output is ≥ 0.999999 on all inputs (or the
-      RFC documents exactly which extra steps model2vec applies, with the
-      spike updated to match and then passing)
+- [ ] `docs/rfc-generalization.md` exists: IR triple, support matrix (≥8
+      models), matcher decision w/ spike data, two-phase boundary, layer E
+      passes, emitter priorities, verifier contract, non-goals, open
+      questions
+- [ ] Spike ran on potion-multilingual-128M with ≥200 multilingual inputs;
+      per-language cosine table in the RFC appendix
 - [ ] `cargo test --features tests` still exits 0 (nothing production broke)
-- [ ] `plans/README.md` updated (status row + successor plan stubs)
+- [ ] `plans/README.md` updated (status row + 4 successor stubs)
 
 ## STOP conditions
 
 Stop and report back (do not improvise) if:
 
-- The spike's (a) vs (b) comparison cannot be brought above 0.999 cosine
-  even after accounting for documented model2vec post-processing — the
-  Unigram path has unknown semantics and layer A's estimate is wrong;
-  report the discrepancy data.
-- `model2vec-rs` cannot load potion-base-8M in this environment (network/
-  API drift) — note versions and stop the spike, finish the RFC.
+- skeletoken cannot round-trip potion-multilingual-128M's tokenizer (parse
+  or re-serialization failure) — report the error verbatim; the two-phase
+  architecture loses its frontend and the RFC must say so.
+- The reference encoding path (step 3.1) doesn't reproduce published model
+  behavior (sanity-check a couple of similarity pairs) — the baseline is
+  wrong; fix before measuring, or report.
 - You find existing generalization work in the repo beyond the NIFE branch
   (drift check) — reconcile, don't duplicate.
+- Network/HF access unavailable — finish the RFC with the matrix marked
+  partial; skip the spike and mark this plan BLOCKED on the spike.
 
 ## Maintenance notes
 
-- The RFC is the decision record: future plans (006+) must stay consistent
-  with it or update it explicitly in the same change.
-- Re-run the Step 1 catalog when adding a model family — tokenizer.json
-  schemas vary more than HF docs suggest.
-- Reviewer of the RFC: the key judgment calls are (1) env-var interface
-  vs manifest file, (2) Unigram-before-BPE ordering, (3) keeping per-model
-  Cargo features rejected. Each has its rationale inline; challenge there.
+- The RFC is the decision record: plans 006+ must stay consistent with it
+  or update it explicitly in the same change.
+- The matcher decision should be revisited if skeletoken ships tokenizer
+  hashing or a Rust port emerges.
+- The support matrix goes stale — re-run the census command when adding a
+  model family.
+- Reviewer of the RFC: the key judgment calls are (1) greedy-ification vs
+  per-family runtimes (data-driven via spike), (2) Python-phase boundary
+  (no Python for consumers), (3) keeping per-model Cargo features rejected,
+  (4) layer E pass ordering. Challenge there.

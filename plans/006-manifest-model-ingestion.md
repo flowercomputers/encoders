@@ -87,7 +87,7 @@ match on content.)
 | Default build + parity | `cargo test --features tests` | all pass |
 | Quantized parity | `cargo test --features tests,quant-8` | all pass |
 | Alt-model build (Step 5) | `ESE_MODEL=... ESE_MODEL_SHA256=... ESE_TOKENIZER_SHA256=... cargo test --features tests,dim-1024` | all pass |
-| Negative test (Step 6) | `ESE_MODEL=minishlab/potion-base-8M@main cargo check 2>&1 \| grep -i unigram` | clear build error naming Unigram |
+| Negative test (Step 6) | `ESE_MODEL=minishlab/potion-multilingual-128M@<rev> cargo check 2>&1 \| grep -i unigram` | clear build error naming Unigram |
 | Resolve a HF revision | `curl -s https://huggingface.co/api/models/<repo> \| python3 -c "import json,sys; print(json.load(sys.stdin)['sha'])"` | 40-char sha |
 
 ## Scope
@@ -220,10 +220,12 @@ In `build.rs`, after loading `tokenizer.json`:
   Keep the accepted-shapes list in one function with a comment pointing at
   `src/pretokenizer.rs` as the thing it mirrors.
 
-**Verify**: `ESE_MODEL=minishlab/potion-base-8M@main cargo check 2>&1 | grep -i "unigram"`
-→ the clear error message (resolve `main` to a sha first if Step 1's
-pinning rejects bare `@main`; in that case use the resolved revision — the
-point is the Unigram rejection, exercise it however the interface allows).
+**Verify**: `ESE_MODEL=minishlab/potion-multilingual-128M@<rev> cargo check 2>&1 | grep -i "unigram"`
+→ the clear error message (resolve `<rev>` via
+`curl -s https://huggingface.co/api/models/minishlab/potion-multilingual-128M | python3 -c "import json,sys; print(json.load(sys.stdin)['sha'])"`).
+NOTE (verified 2026-06-12): `potion-base-8M` is WordPiece, NOT Unigram — do
+not use it for this negative test. `potion-multilingual-128M` is Unigram
+(Metaspace pre-tokenizer) and is the correct rejection case.
 
 ### Step 4: Document it
 
@@ -259,6 +261,18 @@ Reproduce what the NIFE branch did, with zero source edits:
 **Verify**: the command above → all tests pass. Then re-run the default
 build (`cargo test --features tests`) → still passes (cache isolation
 works; no cross-contamination).
+
+### Step 5b (optional, non-blocking): bonus second WordPiece model
+
+`minishlab/potion-base-8M` is WordPiece with BertNormalizer/BertPreTokenizer
+(verified 2026-06-12) — i.e. plausibly compilable by this plan with zero
+layer-A work. If time permits, try the Step 5 procedure on it
+(`ESE_MODEL=minishlab/potion-base-8M@<rev>`, likely
+`ESE_NORMALIZE_OUTPUT` unset, dims per its config). If parity passes,
+record it — that's three models unlocked by this plan. If it fails, do NOT
+debug; record the failing similarities in NOTES (model2vec pooling may
+differ in a way the derivation doesn't capture — useful data for the layer-A
+plan) and move on. This step cannot fail the plan.
 
 ### Step 6: Negative-path checks
 
@@ -314,9 +328,14 @@ Stop and report back (do not improvise) if:
 ## Maintenance notes
 
 - This establishes the model-selection interface (`ESE_MODEL[@rev]`,
-  `ESE_MODEL_DIR`, checksum vars). Layer A (Unigram) and layer C
-  (distillation) plug into it: a distilled local model is just
+  `ESE_MODEL_DIR`, checksum vars). Layer A (tokenizer generality) and layer
+  C (distillation) plug into it: a distilled local model is just
   `ESE_MODEL_DIR=...`. Don't add a second interface.
+- `ESE_MODEL_DIR` is also the designated seam for the possible two-phase
+  compile in the RFC (plan 005): a Python canonicalization phase
+  (skeletoken: validate/decase/greedy-ify `tokenizer.json`) would emit a
+  transformed artifact directory that this interface consumes unchanged —
+  no Python in the pure-Rust consumer path.
 - The Step 3 normalizer guard mirrors `src/pretokenizer.rs` by hand — when
   layer A makes normalization config-driven, delete the guard in the same
   change.

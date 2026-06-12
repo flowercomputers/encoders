@@ -36,10 +36,22 @@ REJECTED (with one-line rationale)
 - `codex/nife-mxbai-support` is intentionally NOT merged — superseded by
   plan 006; kept as reference (its `ModelProfile`, cache-key, and
   normalize-output ideas are absorbed there).
-- Successor plans sketched in 005, to be written after 006 lands:
-  007-unigram-runtime (layer A) — NOT YET PLANNED;
-  008-distill-frontend (layer C) — NOT YET PLANNED;
-  009-runtime-model-packs (layer D) — NOT YET PLANNED.
+- 2026-06-12: plan 005 revised (v2) after a cofounder design conversation
+  (Cursor transcript) contributed the IR-triple framing
+  `(TokenizerSpec, EmbeddingMatrix, PoolingSpec)`, the greedy-ification
+  lever (skeletoken `make_model_greedy()` — collapse 4 matchers → 1 at
+  compile time), and the vocab-surgery pass layer. Tokenizer types were
+  verified against HF the same day: **potion-base-8M and M2V_base_output
+  are WordPiece** (v1 of plan 005 wrongly said Unigram);
+  potion-multilingual-128M and multilingual-e5-base are Unigram. Plan 006's
+  negative test was corrected accordingly.
+- Successor plans sketched in 005, to be written after 006 + the RFC land:
+  007-tokenizer-generality (layer A — matcher approach decided by the RFC
+  spike: greedy-ification vs per-family runtimes) — NOT YET PLANNED;
+  008-optimization-passes (layer E: prune/extend/transplant/reweight/quant)
+  — NOT YET PLANNED;
+  009-distill-frontend (layer C) — NOT YET PLANNED;
+  010-emitters-wasm-and-packs (layer D) — NOT YET PLANNED.
 
 ## Post-001 facts for later executors
 
