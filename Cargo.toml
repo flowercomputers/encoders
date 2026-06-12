@@ -12,7 +12,7 @@ keywords = ["embeddings", "model2vec", "nlp", "search"]
 categories = ["text-processing", "artificial-intelligence", "compression", "encoding", "science"]
 
 [workspace]
-resolver = "1"
+resolver = "3"
 members = [
   "api-py",
 ]
