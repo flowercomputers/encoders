@@ -90,11 +90,11 @@ Verified against HF Hub, 2026-06-12. "Blocked on" indicates which roadmap layer 
 | minishlab/potion-multilingual-128M | **Unigram** | Sequence(Sequence(Precompiled,…),Replace×N,Strip) | Metaspace | TemplateProcessing | list[[token,score]] | yes | Layer A (Unigram Viterbi + Metaspace pre-tok) |
 | intfloat/multilingual-e5-base | **Unigram** | **Precompiled** | Sequence(WhitespaceSplit,Metaspace) | TemplateProcessing [CLS]/[SEP] | list[[token,score]] | yes | Layer A + Precompiled-normalizer decision (see §open-questions) |
 | average_word_embeddings_glove.6B.300d | WordLevel-equivalent | none (no tokenizer.json) | whitespace split | none | plain vocab file | — | Layer B (WordLevel; trivial dict lookup; no tokenizer.json on HF) |
-| stephantul/NIFE-mxbai-embed-large-v1 | WordPiece (inferred: BERT-family teacher) | BertNormalizer (inferred) | BertPreTokenizer (inferred) | — | dict{token:id} (inferred) | — | Layer B (access-gated on HF; tokenizer.json returns 401) |
+| stephantulkens/NIFE-mxbai-embed-large-v1 | WordPiece | BertNormalizer | BertPreTokenizer | no specials added (post_processor: null) | dict{token:id} | — | Layer B |
 | google/embeddinggemma-300m | — | — | — | — | — | — | access-gated (401); not yet catalogued |
 
 **Notes:**
-- Layer B alone (plan 006: manifest ingestion, configurable model) already unlocks 9 of the 14 rows above (all WordPiece/BERT-family).
+- Layer B alone (plan 006: manifest ingestion, configurable model) already unlocks 10 of the 14 rows above (all WordPiece/BERT-family, including the now-verified NIFE row).
 - The Unigram bucket (potion-multilingual, e5/xlm-r family) is the gate for Layer A.
 - `potion-multilingual-128M`'s normalizer is a nested Sequence containing a Precompiled charsmap sub-normalizer, meaning it shares the hard case with e5 (Precompiled at compile time; see §open-questions).
 - GloVe average_word_embeddings has no `tokenizer.json` — it is WordLevel-equivalent and requires a trivial dict lookup at runtime; Layer B can handle it with a WordLevel path.
