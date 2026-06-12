@@ -6,12 +6,149 @@ use std::{
     path::{Path, PathBuf},
 };
 
+// ── Default model (built-in pinned constants) ────────────────────────────────
 // Pinned to upstream revision f60985c706f192d45d218078e49e5a8b6f15283a (resolved 2026-06-12).
 // To bump: update the revision in both URLs, re-download, recompute the SHA-256s.
-static MODEL_URL: &'static str = "https://huggingface.co/sentence-transformers/static-retrieval-mrl-en-v1/resolve/f60985c706f192d45d218078e49e5a8b6f15283a/0_StaticEmbedding/model.safetensors";
-static TOKENIZER_URL: &'static str = "https://huggingface.co/sentence-transformers/static-retrieval-mrl-en-v1/resolve/f60985c706f192d45d218078e49e5a8b6f15283a/0_StaticEmbedding/tokenizer.json";
-static MODEL_SHA256: &str = "164fc63ee9f9267be7378fcbd7df99d09788a2f45244c92aa99ae5a574925716";
-static TOKENIZER_SHA256: &str = "d241a60d5e8f04cc1b2b3e9ef7a4921b27bf526d9f6050ab90f9267a1f9e5c66";
+static DEFAULT_MODEL_NAME: &str =
+    "sentence-transformers/static-retrieval-mrl-en-v1@f60985c706f192d45d218078e49e5a8b6f15283a";
+static DEFAULT_MODEL_URL: &str = "https://huggingface.co/sentence-transformers/static-retrieval-mrl-en-v1/resolve/f60985c706f192d45d218078e49e5a8b6f15283a/0_StaticEmbedding/model.safetensors";
+static DEFAULT_TOKENIZER_URL: &str = "https://huggingface.co/sentence-transformers/static-retrieval-mrl-en-v1/resolve/f60985c706f192d45d218078e49e5a8b6f15283a/0_StaticEmbedding/tokenizer.json";
+static DEFAULT_MODEL_SHA256: &str =
+    "164fc63ee9f9267be7378fcbd7df99d09788a2f45244c92aa99ae5a574925716";
+static DEFAULT_TOKENIZER_SHA256: &str =
+    "d241a60d5e8f04cc1b2b3e9ef7a4921b27bf526d9f6050ab90f9267a1f9e5c66";
+
+// ── Model resolution ─────────────────────────────────────────────────────────
+
+struct ResolvedModel {
+    /// display name, e.g. "sentence-transformers/static-retrieval-mrl-en-v1@<rev>"
+    name: String,
+    /// cache subdirectory key (sanitized name: '/' and '@' -> '-')
+    cache_key: String,
+    /// where artifacts come from
+    source: ModelSource,
+}
+
+enum ModelSource {
+    Remote {
+        model_url: String,
+        tokenizer_url: String,
+        model_sha256: Option<String>,
+        tokenizer_sha256: Option<String>,
+    },
+    LocalDir(PathBuf),
+}
+
+fn sanitize_cache_key(s: &str) -> String {
+    s.replace('/', "-").replace('@', "-")
+}
+
+fn resolve_model() -> ResolvedModel {
+    // Emit rerun-if-env-changed for every var we might read
+    println!("cargo:rerun-if-env-changed=ESE_MODEL_DIR");
+    println!("cargo:rerun-if-env-changed=ESE_MODEL");
+    println!("cargo:rerun-if-env-changed=ESE_MODEL_SHA256");
+    println!("cargo:rerun-if-env-changed=ESE_TOKENIZER_SHA256");
+    println!("cargo:rerun-if-env-changed=ESE_MODEL_FILE");
+    println!("cargo:rerun-if-env-changed=ESE_TOKENIZER_FILE");
+    println!("cargo:rerun-if-env-changed=ESE_NORMALIZE_OUTPUT");
+
+    // 1. ESE_MODEL_DIR: local directory, no download, no checksum
+    if let Ok(dir_str) = env::var("ESE_MODEL_DIR") {
+        let dir = PathBuf::from(&dir_str);
+        let model_file = dir.join("model.safetensors");
+        let tokenizer_file = dir.join("tokenizer.json");
+        if !model_file.exists() || !tokenizer_file.exists() {
+            panic!(
+                "ESE_MODEL_DIR={} must contain both model.safetensors and tokenizer.json (missing: {}{})",
+                dir_str,
+                if !model_file.exists() { "model.safetensors " } else { "" },
+                if !tokenizer_file.exists() { "tokenizer.json" } else { "" },
+            );
+        }
+        let name = format!("local:{}", dir_str);
+        let cache_key = sanitize_cache_key(&name);
+        return ResolvedModel {
+            name,
+            cache_key,
+            source: ModelSource::LocalDir(dir),
+        };
+    }
+
+    // 2. ESE_MODEL: <hf-repo>@<revision> (revision is mandatory)
+    if let Ok(model_spec) = env::var("ESE_MODEL") {
+        // Require @revision
+        let at_pos = model_spec.find('@').unwrap_or_else(|| {
+            panic!(
+                "ESE_MODEL={:?} must include a pinned revision separated by '@', \
+                 e.g. ESE_MODEL=owner/repo@<40-char-sha>. \
+                 Bare repo IDs are rejected — reproducibility is non-negotiable \
+                 (see plans/003-pin-and-checksum-model-downloads.md).",
+                model_spec
+            )
+        });
+        let repo = &model_spec[..at_pos];
+        let rev = &model_spec[at_pos + 1..];
+        if rev.is_empty() {
+            panic!(
+                "ESE_MODEL={:?} has '@' but no revision after it. \
+                 Provide the full commit SHA, e.g. owner/repo@abc1234...",
+                model_spec
+            );
+        }
+
+        // Subpath overrides (for models with non-standard paths)
+        let model_file = env::var("ESE_MODEL_FILE").unwrap_or_else(|_| "model.safetensors".into());
+        let tokenizer_file =
+            env::var("ESE_TOKENIZER_FILE").unwrap_or_else(|_| "tokenizer.json".into());
+
+        let model_url = format!(
+            "https://huggingface.co/{}/resolve/{}/{}",
+            repo, rev, model_file
+        );
+        let tokenizer_url = format!(
+            "https://huggingface.co/{}/resolve/{}/{}",
+            repo, rev, tokenizer_file
+        );
+
+        let model_sha256 = env::var("ESE_MODEL_SHA256").ok();
+        let tokenizer_sha256 = env::var("ESE_TOKENIZER_SHA256").ok();
+
+        if model_sha256.is_none() {
+            println!("cargo:warning=ESE_MODEL_SHA256 not set — integrity of {} is unverified. Set it to the SHA-256 of model.safetensors for reproducible builds.", repo);
+        }
+        if tokenizer_sha256.is_none() {
+            println!("cargo:warning=ESE_TOKENIZER_SHA256 not set — integrity of {} is unverified. Set it to the SHA-256 of tokenizer.json for reproducible builds.", repo);
+        }
+
+        let name = model_spec.clone();
+        let cache_key = sanitize_cache_key(&name);
+        return ResolvedModel {
+            name,
+            cache_key,
+            source: ModelSource::Remote {
+                model_url,
+                tokenizer_url,
+                model_sha256,
+                tokenizer_sha256,
+            },
+        };
+    }
+
+    // 3. Built-in default
+    ResolvedModel {
+        name: DEFAULT_MODEL_NAME.to_string(),
+        cache_key: sanitize_cache_key(DEFAULT_MODEL_NAME),
+        source: ModelSource::Remote {
+            model_url: DEFAULT_MODEL_URL.to_string(),
+            tokenizer_url: DEFAULT_TOKENIZER_URL.to_string(),
+            model_sha256: Some(DEFAULT_MODEL_SHA256.to_string()),
+            tokenizer_sha256: Some(DEFAULT_TOKENIZER_SHA256.to_string()),
+        },
+    }
+}
+
+// ── Main ─────────────────────────────────────────────────────────────────────
 
 fn main() {
     let out = Path::new(&env::var("OUT_DIR").unwrap()).to_path_buf();
@@ -19,30 +156,99 @@ fn main() {
 
     let dtype = dtype();
 
-    let model_dir = shared_model_dir(&out);
-    let model_path = &model_dir.join("model.safetensors");
-    let tokenizer_path = &model_dir.join("tokenizer.json");
+    let model = resolve_model();
+    let model_dir = shared_model_dir(&out, &model.cache_key);
 
-    download_if_missing(model_path, MODEL_URL, MODEL_SHA256);
-    download_if_missing(tokenizer_path, TOKENIZER_URL, TOKENIZER_SHA256);
-    let (weights, dims) = parse_safetensors(model_path);
+    let (model_path, tokenizer_path) = match &model.source {
+        ModelSource::LocalDir(dir) => (
+            dir.join("model.safetensors"),
+            dir.join("tokenizer.json"),
+        ),
+        ModelSource::Remote {
+            model_url,
+            tokenizer_url,
+            model_sha256,
+            tokenizer_sha256,
+        } => {
+            let mp = model_dir.join("model.safetensors");
+            let tp = model_dir.join("tokenizer.json");
+            if let Some(sha) = model_sha256 {
+                download_if_missing(&mp, model_url, sha);
+            } else {
+                download_if_missing_no_checksum(&mp, model_url);
+            }
+            if let Some(sha) = tokenizer_sha256 {
+                download_if_missing(&tp, tokenizer_url, sha);
+            } else {
+                download_if_missing_no_checksum(&tp, tokenizer_url);
+            }
+            (mp, tp)
+        }
+    };
+
+    let (weights, dims) = parse_safetensors(&model_path);
 
     println!(
         "cargo:rerun-if-changed={}",
         tokenizer_path.to_str().unwrap()
     );
-    let tokenizer_data = fs::read_to_string(tokenizer_path).expect("failed to read tokenizer file");
+    let tokenizer_data = fs::read_to_string(&tokenizer_path).expect("failed to read tokenizer file");
     let tk: serde_json::Value = serde_json::from_str(tokenizer_data.as_str()).unwrap();
+
+    // ── Guard: tokenizer family and normalizer ────────────────────────────────
+    guard_tokenizer_family(&tk, &model.name);
+
     let vocab = tk["model"]["vocab"]
         .as_object()
         .expect("missing model.vocab");
 
-    let unk_id = special_token_id(vocab, "[UNK]")
-        .expect("tokenizer vocab is missing '[UNK]' — cannot build embedding table");
-    let cls_id = special_token_id(vocab, "[CLS]")
-        .expect("tokenizer vocab is missing '[CLS]' — cannot build embedding table");
-    let sep_id = special_token_id(vocab, "[SEP]")
-        .expect("tokenizer vocab is missing '[SEP]' — cannot build embedding table");
+    // ── Derive model facts ────────────────────────────────────────────────────
+
+    // UNK token: from model.unk_token if present, else "[UNK]"
+    let unk_token = tk["model"]["unk_token"]
+        .as_str()
+        .unwrap_or("[UNK]")
+        .to_string();
+
+    let unk_id = special_token_id(vocab, &unk_token)
+        .unwrap_or_else(|| panic!(
+            "tokenizer vocab for '{}' is missing '{}' (UNK token) — cannot build embedding table",
+            model.name, unk_token
+        ));
+
+    // ADD_SPECIAL_TOKENS: derived from post_processor
+    let add_special_tokens = derive_add_special_tokens(&tk, &model.name);
+
+    let cls_id = if add_special_tokens {
+        Some(special_token_id(vocab, "[CLS]").unwrap_or_else(|| panic!(
+            "model '{}' post_processor references CLS but '[CLS]' is missing from vocab",
+            model.name
+        )))
+    } else {
+        None
+    };
+    let sep_id = if add_special_tokens {
+        Some(special_token_id(vocab, "[SEP]").unwrap_or_else(|| panic!(
+            "model '{}' post_processor references SEP but '[SEP]' is missing from vocab",
+            model.name
+        )))
+    } else {
+        None
+    };
+
+    // CONTINUING_PREFIX: from model.continuing_subword_prefix, default "##"
+    let continuing_prefix = tk["model"]["continuing_subword_prefix"]
+        .as_str()
+        .unwrap_or("##")
+        .to_string();
+
+    // MAX_WORD_LEN: from model.max_input_chars_per_word, default 100
+    let max_word_len = tk["model"]["max_input_chars_per_word"]
+        .as_u64()
+        .unwrap_or(100) as usize;
+
+    // NORMALIZE_OUTPUT: env var ESE_NORMALIZE_OUTPUT=1
+    let normalize_output = env::var("ESE_NORMALIZE_OUTPUT").map(|v| v == "1").unwrap_or(false);
 
     let zero_row_special = vec![0.0f32; dims as usize];
     let mut unk: Vec<f32> = zero_row_special.clone();
@@ -59,9 +265,9 @@ fn main() {
         entries.push((token.clone(), i));
         if i == unk_id {
             unk = weights[i].clone();
-        } else if i == cls_id {
+        } else if Some(i) == cls_id {
             cls = weights[i].clone();
-        } else if i == sep_id {
+        } else if Some(i) == sep_id {
             sep = weights[i].clone();
         }
     }
@@ -198,7 +404,7 @@ fn main() {
     fs::write(
         out.join("model_constants.rs"),
         format!(
-            "
+            "\
 pub const DIMENSIONS: usize = {dims};\n\
 pub type Param = [{dtype}; DIMENSIONS];\n\
 pub const TABLE_SIZE: usize = {table_size};\n\
@@ -208,18 +414,183 @@ pub const SLOT_SIZE: usize = 8 + DIMENSIONS * DTYPE_SIZE;\n\
 pub const UNK: Param = {unk_str};\n\
 pub const CLS: Param = {cls_str};\n\
 pub const SEP: Param = {sep_str};\n\
-pub const MAX_WORD_LEN: usize = 100;\n\
+pub const MAX_WORD_LEN: usize = {max_word_len};\n\
+pub const CONTINUING_PREFIX: &str = {continuing_prefix:?};\n\
+pub const ADD_SPECIAL_TOKENS: bool = {add_special_tokens};\n\
+pub const NORMALIZE_OUTPUT: bool = {normalize_output};\n\
 pub const DTYPE_SIZE: usize = {dtype_sz};\n\
 pub const QUANT_MIN: f32 = {global_min:?};\n\
 pub const QUANT_SCALE: f32 = {quant_scale:?};\n\
+pub const MODEL_NAME: &str = {model_name:?};\n\
 ",
+            model_name = model.name,
         ),
     )
     .unwrap();
 
     #[cfg(feature = "tests")]
-    generate_testdata(&out, &weights, dims as usize, tokenizer_path, global_min, quant_scale);
+    generate_testdata(
+        &out,
+        &weights,
+        dims as usize,
+        &tokenizer_path,
+        global_min,
+        quant_scale,
+        add_special_tokens,
+        normalize_output,
+    );
 }
+
+// ── Tokenizer family guard ────────────────────────────────────────────────────
+
+/// Accept tokenizer configs whose normalization and vocab type the compiled
+/// runtime (src/pretokenizer.rs) can handle faithfully. Anything else panics
+/// at build time with a clear message.
+///
+/// Accepted shapes mirror what src/pretokenizer.rs implements:
+///   - model.type = "WordPiece"
+///   - normalizer: BertNormalizer{lowercase:true} or a Sequence that contains
+///     one, or absent (treated as identity — only safe for already-lowercase
+///     inputs, but not rejected here since that's a user responsibility).
+///
+/// When layer A (tokenizer generality) makes normalization config-driven,
+/// delete this guard in the same change.
+fn guard_tokenizer_family(tk: &serde_json::Value, model_name: &str) {
+    // 1. Reject non-WordPiece model types
+    let model_type = tk["model"]["type"].as_str().unwrap_or("unknown");
+    if model_type != "WordPiece" {
+        panic!(
+            "model '{}' uses a '{}' tokenizer; ese currently compiles WordPiece models only \
+             (Unigram support is planned — see docs/rfc-generalization.md)",
+            model_name, model_type
+        );
+    }
+
+    // 2. Check normalizer is compatible with the BERT-uncased pretokenizer
+    check_normalizer(&tk["normalizer"], model_name);
+}
+
+fn check_normalizer(norm: &serde_json::Value, model_name: &str) {
+    if norm.is_null() || *norm == serde_json::Value::Null {
+        // No normalizer declared — pass (identity; runtime handles it)
+        return;
+    }
+    match norm["type"].as_str() {
+        Some("BertNormalizer") => {
+            // Must have lowercase: true (or absent, defaulting to true for BERT)
+            let lowercase = norm["lowercase"].as_bool().unwrap_or(true);
+            if !lowercase {
+                panic!(
+                    "model '{}' uses a BertNormalizer with lowercase:false (a cased model); \
+                     ese's runtime (src/pretokenizer.rs) is BERT-uncased only. \
+                     Cased model support is planned — see docs/rfc-generalization.md",
+                    model_name
+                );
+            }
+            // strip_accents: null or true are both fine (BERT treats null as
+            // "follow lowercase", which means strip for uncased)
+        }
+        Some("Sequence") => {
+            // Accept if every element is acceptable
+            if let Some(normalizers) = norm["normalizers"].as_array() {
+                for n in normalizers {
+                    check_normalizer(n, model_name);
+                }
+            }
+        }
+        Some("Lowercase") => {
+            // Plain lowercase is acceptable; normalization handled in pretokenizer
+        }
+        Some("NFC") | Some("NFD") | Some("NFKC") | Some("NFKD") => {
+            // Unicode normalization forms are fine
+        }
+        Some("StripAccents") => {
+            // Accent stripping is fine (matches BERT-uncased behaviour)
+        }
+        Some("Replace") => {
+            // Simple replacement rules are generally fine
+        }
+        Some(other) => {
+            panic!(
+                "model '{}' uses a '{}' normalizer that the ese runtime (src/pretokenizer.rs) \
+                 does not implement. Supported: BertNormalizer{{lowercase:true}}, Sequence. \
+                 See docs/rfc-generalization.md for the generalization roadmap.",
+                model_name, other
+            );
+        }
+        None => {
+            // No type field — treat as unknown/pass
+        }
+    }
+}
+
+/// Derive ADD_SPECIAL_TOKENS from the tokenizer's post_processor section.
+///
+/// TemplateProcessing or BertProcessing that references CLS/SEP → true.
+/// Absent or no special tokens → false.
+fn derive_add_special_tokens(tk: &serde_json::Value, model_name: &str) -> bool {
+    let pp = &tk["post_processor"];
+    if pp.is_null() || *pp == serde_json::Value::Null {
+        return false;
+    }
+    let pp_type = pp["type"].as_str().unwrap_or("");
+    match pp_type {
+        "BertProcessing" => {
+            // BertProcessing always adds CLS and SEP
+            true
+        }
+        "TemplateProcessing" => {
+            // Check if the single/pair templates reference CLS or SEP special tokens
+            let single = pp["single"].as_array();
+            let pair = pp["pair"].as_array();
+            let specials = pp["special_tokens"].as_object();
+
+            // Check if any template element has a SpecialToken referencing CLS/SEP
+            let template_has_specials = |arr: Option<&Vec<serde_json::Value>>| -> bool {
+                arr.map(|items| {
+                    items.iter().any(|item| {
+                        item.get("SpecialToken")
+                            .and_then(|st| st.get("id"))
+                            .and_then(|id| id.as_str())
+                            .map(|id| id == "[CLS]" || id == "[SEP]")
+                            .unwrap_or(false)
+                    })
+                }).unwrap_or(false)
+            };
+
+            let uses_cls_sep = template_has_specials(single) || template_has_specials(pair)
+                || specials.map(|s| s.contains_key("[CLS]") || s.contains_key("[SEP]")).unwrap_or(false);
+
+            if uses_cls_sep {
+                true
+            } else {
+                false
+            }
+        }
+        "RobertaProcessing" => {
+            // RobertaProcessing uses BOS/EOS, not CLS/SEP — treat as false
+            // (the guard step will catch mismatches at the normalizer level)
+            println!(
+                "cargo:warning=model '{}' has a RobertaProcessing post_processor; \
+                 ADD_SPECIAL_TOKENS will be false (CLS/SEP rows will be zero). \
+                 This may produce incorrect embeddings if the model expects BOS/EOS pooling.",
+                model_name
+            );
+            false
+        }
+        "" => false,
+        _ => {
+            println!(
+                "cargo:warning=model '{}' has an unrecognized post_processor type '{}'; \
+                 ADD_SPECIAL_TOKENS will be false.",
+                model_name, pp_type
+            );
+            false
+        }
+    }
+}
+
+// ── Helper functions ──────────────────────────────────────────────────────────
 
 fn special_token_id(
     vocab: &serde_json::Map<String, serde_json::Value>,
@@ -236,16 +607,31 @@ fn phf_hash(key: &[u8], seed: u64) -> u64 {
     h ^ (h >> 32)
 }
 
-fn parse_safetensors(model_path: &PathBuf) -> (Vec<Vec<f32>>, u64) {
+fn parse_safetensors(model_path: &Path) -> (Vec<Vec<f32>>, u64) {
     println!("cargo:rerun-if-changed={}", model_path.to_str().unwrap());
 
     let data = fs::read(model_path).expect("failed to read safetensors file");
     let meta_len = u64::from_le_bytes(data[..8].try_into().unwrap()) as usize;
     let meta: serde_json::Value = serde_json::from_slice(&data[8..8 + meta_len]).unwrap();
 
-    let tensor_key = meta
+    // Reject ambiguous files with more than one non-metadata tensor
+    let non_meta_keys: Vec<String> = meta
         .as_object()
-        .and_then(|m| m.keys().find(|k| !k.starts_with("__")).cloned())
+        .map(|m| m.keys().filter(|k| !k.starts_with("__")).cloned().collect())
+        .unwrap_or_default();
+    if non_meta_keys.len() > 1 {
+        panic!(
+            "safetensors file {} contains {} tensors ({}); ese expects exactly one embedding \
+             weight tensor per file. Provide a single-tensor safetensors file.",
+            model_path.display(),
+            non_meta_keys.len(),
+            non_meta_keys.join(", ")
+        );
+    }
+
+    let tensor_key = non_meta_keys
+        .into_iter()
+        .next()
         .unwrap_or_else(|| "embedding.weight".to_string());
 
     let tensor = &meta[&tensor_key];
@@ -403,6 +789,16 @@ fn download_if_missing(path: &Path, url: &str, expected_sha256: &str) {
     fs::write(path, bytes).unwrap();
 }
 
+fn download_if_missing_no_checksum(path: &Path, url: &str) {
+    if path.exists() {
+        return;
+    }
+    eprintln!("cargo:warning=Downloading {}...", path.display());
+    let resp = minreq::get(url).send().expect("download failed");
+    assert!(resp.status_code == 200, "HTTP {}", resp.status_code);
+    fs::write(path, resp.as_bytes()).unwrap();
+}
+
 fn trunc_dims() -> u64 {
     if cfg!(feature = "dim-1024") {
         1024
@@ -443,7 +839,7 @@ fn dtype_sz() -> usize {
     }
 }
 
-fn shared_model_dir(out: &Path) -> PathBuf {
+fn shared_model_dir(out: &Path, cache_key: &str) -> PathBuf {
     let dir = env::var_os("ESE_CACHE_DIR")
         .map(PathBuf::from)
         .or_else(|| {
@@ -456,6 +852,7 @@ fn shared_model_dir(out: &Path) -> PathBuf {
                 .join("ese-cache")
                 .join(env!("CARGO_PKG_NAME"))
         });
+    let dir = dir.join(cache_key);
     fs::create_dir_all(&dir)
         .unwrap_or_else(|err| panic!("failed to create cache dir {}: {err}", dir.display()));
     dir
@@ -475,7 +872,26 @@ fn oracle_weight(w: f32, global_min: f32, quant_scale: f32) -> f32 {
 }
 
 #[cfg(feature = "tests")]
-fn generate_testdata(out: &Path, weights: &[Vec<f32>], _dims: usize, tokenizer_path: &PathBuf, global_min: f32, quant_scale: f32) {
+fn normalize_vec(vector: &mut [f32]) {
+    let norm = vector.iter().map(|v| v * v).sum::<f32>().sqrt();
+    if norm > 0.0 {
+        for v in vector {
+            *v /= norm;
+        }
+    }
+}
+
+#[cfg(feature = "tests")]
+fn generate_testdata(
+    out: &Path,
+    weights: &[Vec<f32>],
+    _dims: usize,
+    tokenizer_path: &Path,
+    global_min: f32,
+    quant_scale: f32,
+    add_special_tokens: bool,
+    normalize_output: bool,
+) {
     let tokenizer =
         tokenizers::Tokenizer::from_file(tokenizer_path).expect("failed to load tokenizer");
 
@@ -498,22 +914,24 @@ fn generate_testdata(out: &Path, weights: &[Vec<f32>], _dims: usize, tokenizer_p
 
     for &input in &inputs {
         code.push_str(&format!("    {:?},\n", input));
-        let tokens = tokenizer.encode(input, true).unwrap();
+        let tokens = tokenizer.encode(input, add_special_tokens).unwrap();
         let token_ids = tokens.get_ids();
-        let scale = 1.0 / token_ids.len() as f32;
         let mut vector = vec![0.0f32; _dims];
         for &tok_id in token_ids {
             for (v, &w) in vector
                 .iter_mut()
                 .zip(unsafe { weights.get_unchecked(tok_id as usize) }.iter())
             {
-                *v += oracle_weight(w, global_min, quant_scale)
+                *v += oracle_weight(w, global_min, quant_scale);
             }
         }
+        let scale = if token_ids.is_empty() { 1.0 } else { 1.0 / token_ids.len() as f32 };
         for v in vector.iter_mut() {
-            *v *= scale
+            *v *= scale;
         }
-
+        if normalize_output {
+            normalize_vec(&mut vector);
+        }
         outputs.push(vector);
     }
 

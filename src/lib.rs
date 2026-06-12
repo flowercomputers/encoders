@@ -13,6 +13,15 @@ mod wordpiece;
 /// ```
 pub const DIMENSIONS: usize = lookup::DIMENSIONS;
 
+/// MODEL_NAME is the static embedding model compiled into this build.
+///
+/// # Examples
+///
+/// ```
+/// assert!(!ese::MODEL_NAME.is_empty());
+/// ```
+pub const MODEL_NAME: &str = lookup::MODEL_NAME;
+
 /// Encodes a batch of texts into embedding vectors.
 ///
 /// Each input string is independently normalized, tokenized, and encoded.
@@ -87,21 +96,43 @@ pub fn encode(
 pub fn encode_single(input: impl AsRef<str>) -> [f32; DIMENSIONS] {
     let text = input.as_ref();
     let mut vector = [0.0f32; DIMENSIONS];
-    wordpiece::accumulate(&mut vector, &lookup::CLS);
-    let mut token_count: u32 = 2; // CLS + SEP
+    if lookup::ADD_SPECIAL_TOKENS {
+        wordpiece::accumulate(&mut vector, &lookup::CLS);
+    }
+    let mut token_count: u32 = if lookup::ADD_SPECIAL_TOKENS { 2 } else { 0 };
     let mut normalized = String::with_capacity(text.len());
     pretokenizer::normalize_into(text, &mut normalized);
     let mut wp_buf = String::with_capacity(64);
     pretokenizer::for_each_pre_token(&normalized, |token| {
         wordpiece::wordpiece_accumulate(token, &mut vector, &mut token_count, &mut wp_buf);
     });
-    let scale = 1.0 / token_count as f32;
-    let mut sep = [0.0f32; DIMENSIONS];
-    wordpiece::accumulate(&mut sep, &lookup::SEP);
-    for (v, s) in vector.iter_mut().zip(sep.iter()) {
-        *v = (*v + *s) * scale;
+    if lookup::ADD_SPECIAL_TOKENS {
+        let scale = 1.0 / token_count as f32;
+        let mut sep = [0.0f32; DIMENSIONS];
+        wordpiece::accumulate(&mut sep, &lookup::SEP);
+        for (v, s) in vector.iter_mut().zip(sep.iter()) {
+            *v = (*v + *s) * scale;
+        }
+    } else {
+        let scale = if token_count != 0 { 1.0 / token_count as f32 } else { 1.0 };
+        for v in &mut vector {
+            *v *= scale;
+        }
+    }
+    if lookup::NORMALIZE_OUTPUT {
+        normalize(&mut vector);
     }
     vector
+}
+
+#[inline]
+fn normalize(vector: &mut [f32; DIMENSIONS]) {
+    let norm = vector.iter().map(|v| v * v).sum::<f32>().sqrt();
+    if norm > 0.0 {
+        for v in vector {
+            *v /= norm;
+        }
+    }
 }
 
 #[cfg(test)]
