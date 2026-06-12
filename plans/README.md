@@ -17,7 +17,7 @@ Repo verification baseline (measured at `5155c13`): `cargo test` passes;
 | 002 | Add CI and quantization-aware parity oracle | P1 | M | 001 | DONE (merged to `advisor/improvements` at `fa965b3`, 2026-06-12; reviewed; v2 after first dispatch STOPPED on the 0.9408 quant-8 floor) |
 | 003 | Pin + checksum model downloads | P1 | S | 001, 002 | DONE (merged to `advisor/improvements` at `9ba5a30`, 2026-06-12; digests independently verified in review) |
 | 004 | Small correctness batch (special tokens by name, exact scaling, portable defaults, hygiene) | P2 | M | 002 | DONE (merged to `advisor/improvements` at `931e600`, 2026-06-12; reviewed; NOTE: output magnitudes changed — cosine unaffected, dot-product consumers must re-embed) |
-| 005 | Generalization roadmap RFC + Unigram-oracle spike | P1 (read) | M | 002 (spike only) | TODO |
+| 005 | Generalization roadmap RFC + greedy-ification spike | P1 (read) | M | 002 (spike only) | DONE (merged at `431f4f8`, 2026-06-12; RFC in docs/rfc-generalization.md; spike verdict: greedy-ification NOT viable as default — native Unigram Viterbi for layer A) |
 | 006 | Manifest-driven model ingestion (ESE_MODEL env config) | P2 | M | 003, 004; design in 005 | TODO |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
@@ -45,9 +45,17 @@ REJECTED (with one-line rationale)
   are WordPiece** (v1 of plan 005 wrongly said Unigram);
   potion-multilingual-128M and multilingual-e5-base are Unigram. Plan 006's
   negative test was corrected accordingly.
+- 2026-06-12, RFC decision (spike-measured): greedy-ification fails p5
+  fidelity on every language (0.73-0.91 vs the 0.97 bar) — layer A
+  implements **native Unigram Viterbi**; greedy-ify is optional pass E8.
+  Also discovered: potion-multilingual-128M nests a Precompiled normalizer
+  inside its Sequence chain (same hard case as e5) — 007 must include a
+  Precompiled-normalizer strategy (spm charsmap) alongside Viterbi.
+  NIFE-mxbai is NOT access-gated (verified by direct fetch; a dispatch's
+  401 was a tooling artifact) — plan 006's acceptance test stands.
 - Successor plans sketched in 005, to be written after 006 + the RFC land:
-  007-tokenizer-generality (layer A — matcher approach decided by the RFC
-  spike: greedy-ification vs per-family runtimes) — NOT YET PLANNED;
+  007-tokenizer-generality (layer A — native Unigram Viterbi + Metaspace
+  pre-tokenizer + Precompiled-normalizer strategy, per RFC §4) — NOT YET PLANNED;
   008-optimization-passes (layer E: prune/extend/transplant/reweight/quant)
   — NOT YET PLANNED;
   009-distill-frontend (layer C) — NOT YET PLANNED;
