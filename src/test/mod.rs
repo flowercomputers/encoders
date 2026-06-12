@@ -70,6 +70,13 @@ mod optional {
         dot / (na * nb)
     }
 
+    /// L2 distance between `want` and `got`, divided by the norm of `want`.
+    fn relative_l2_error(want: &[f32], got: &[f32]) -> f32 {
+        let d: f32 = want.iter().zip(got).map(|(a, b)| (a - b) * (a - b)).sum::<f32>().sqrt();
+        let n: f32 = want.iter().map(|a| a * a).sum::<f32>().sqrt();
+        d / n.max(f32::EPSILON)
+    }
+
     #[test]
     fn test_embeddings_match() {
         // The reference outputs (TEST_OUTPUTS) are computed at build time from the same
@@ -91,31 +98,21 @@ mod optional {
         let embeddings = crate::encode(TEST_INPUTS);
         for (i, (want, got)) in TEST_OUTPUTS.iter().zip(embeddings.iter()).enumerate() {
             // When the oracle produces an all-zero vector (e.g. empty input with
-        // ADD_SPECIAL_TOKENS=false), cosine similarity is undefined (NaN).
-        // In that case verify that the runtime also produces all-zeros.
-        let want_norm: f32 = want.iter().map(|x| x * x).sum::<f32>().sqrt();
-        let got_norm: f32 = got.iter().map(|x| x * x).sum::<f32>().sqrt();
-        if want_norm < f32::EPSILON {
-            assert!(
-                got_norm < f32::EPSILON,
-                "oracle produced zero vector for {i} but runtime produced non-zero (norm={got_norm})"
-            );
-            continue;
-        }
-        let sim = cosine_similarity(want, got);
-            assert!(
-                sim > threshold,
-                "cosine similarity for {i} below threshold: {sim}"
-            );
-            #[cfg(not(any(feature = "quant-8", feature = "quant-16")))]
-            {
-                let rel = |w: &[f32], g: &[f32]| -> f32 {
-                    let d: f32 = w.iter().zip(g).map(|(a, b)| (a - b) * (a - b)).sum::<f32>().sqrt();
-                    let n: f32 = w.iter().map(|a| a * a).sum::<f32>().sqrt();
-                    d / n.max(f32::EPSILON)
-                };
-                assert!(rel(want, got) < 1e-4, "relative L2 error for {i} too high");
+            // ADD_SPECIAL_TOKENS=false), cosine similarity is undefined (NaN).
+            // In that case verify that the runtime also produces all-zeros.
+            let want_norm: f32 = want.iter().map(|x| x * x).sum::<f32>().sqrt();
+            let got_norm: f32 = got.iter().map(|x| x * x).sum::<f32>().sqrt();
+            if want_norm < f32::EPSILON {
+                assert!(
+                    got_norm < f32::EPSILON,
+                    "oracle produced zero vector for {i} but runtime produced non-zero (norm={got_norm})"
+                );
+                continue;
             }
+            let sim = cosine_similarity(want, got);
+            assert!(sim > threshold, "cosine similarity for {i} below threshold: {sim}");
+            #[cfg(not(any(feature = "quant-8", feature = "quant-16")))]
+            assert!(relative_l2_error(want, got) < 1e-4, "relative L2 error for {i} too high");
         }
     }
 }

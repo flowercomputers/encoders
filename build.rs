@@ -172,16 +172,8 @@ fn main() {
         } => {
             let mp = model_dir.join("model.safetensors");
             let tp = model_dir.join("tokenizer.json");
-            if let Some(sha) = model_sha256 {
-                download_if_missing(&mp, model_url, sha);
-            } else {
-                download_if_missing_no_checksum(&mp, model_url);
-            }
-            if let Some(sha) = tokenizer_sha256 {
-                download_if_missing(&tp, tokenizer_url, sha);
-            } else {
-                download_if_missing_no_checksum(&tp, tokenizer_url);
-            }
+            download_if_missing(&mp, model_url, model_sha256.as_deref());
+            download_if_missing(&tp, tokenizer_url, tokenizer_sha256.as_deref());
             (mp, tp)
         }
     };
@@ -250,10 +242,10 @@ fn main() {
     // NORMALIZE_OUTPUT: env var ESE_NORMALIZE_OUTPUT=1
     let normalize_output = env::var("ESE_NORMALIZE_OUTPUT").map(|v| v == "1").unwrap_or(false);
 
-    let zero_row_special = vec![0.0f32; dims as usize];
-    let mut unk: Vec<f32> = zero_row_special.clone();
-    let mut cls: Vec<f32> = zero_row_special.clone();
-    let mut sep: Vec<f32> = zero_row_special.clone();
+    let zero_row = vec![0.0f32; dims as usize];
+    let mut unk: Vec<f32> = zero_row.clone();
+    let mut cls: Vec<f32> = zero_row.clone();
+    let mut sep: Vec<f32> = zero_row.clone();
 
     // Collect (token, weight_index) pairs
     let mut entries: Vec<(String, usize)> = Vec::new();
@@ -366,7 +358,6 @@ fn main() {
 
     // reorder weights into PHF slot with verify hash prepended
     // && zero-fill empty slots
-    let zero_row = vec![0.0f32; dims as usize];
     let slot_size = 8 + dims as usize * dtype_sz();
     let mut phf_slots: Vec<u8> = Vec::with_capacity(table_size * slot_size);
     for slot in 0..table_size {
@@ -447,11 +438,17 @@ pub const MODEL_NAME: &str = {model_name:?};\n\
 /// runtime (src/pretokenizer.rs) can handle faithfully. Anything else panics
 /// at build time with a clear message.
 ///
-/// Accepted shapes mirror what src/pretokenizer.rs implements:
-///   - model.type = "WordPiece"
-///   - normalizer: BertNormalizer{lowercase:true} or a Sequence that contains
-///     one, or absent (treated as identity — only safe for already-lowercase
-///     inputs, but not rejected here since that's a user responsibility).
+/// Accepted normalizer shapes mirror what src/pretokenizer.rs implements:
+///   - BertNormalizer{lowercase:true} (or absent lowercase, which defaults to true)
+///   - Sequence (recurse into each element)
+///   - Lowercase, NFD, StripAccents (each is a subset of what pretokenizer.rs does)
+///   - absent (null): accepted with a warning — the runtime always applies
+///     BERT-uncased normalization (lowercase + NFD + strip combining marks)
+///     regardless, so a null normalizer field is only safe for already-lowercase
+///     inputs. This is intentionally not rejected here (user responsibility).
+///
+/// Rejected: NFC, NFKC, NFKD, Replace, unknown types. These are not implemented
+/// in src/pretokenizer.rs; admitting them would silently diverge from the reference.
 ///
 /// When layer A (tokenizer generality) makes normalization config-driven,
 /// delete this guard in the same change.
@@ -466,13 +463,21 @@ fn guard_tokenizer_family(tk: &serde_json::Value, model_name: &str) {
         );
     }
 
-    // 2. Check normalizer is compatible with the BERT-uncased pretokenizer
+    // 2. Check normalizer matches what src/pretokenizer.rs implements
     check_normalizer(&tk["normalizer"], model_name);
 }
 
 fn check_normalizer(norm: &serde_json::Value, model_name: &str) {
     if norm.is_null() || *norm == serde_json::Value::Null {
-        // No normalizer declared — pass (identity; runtime handles it)
+        // No normalizer declared. The runtime always applies BERT-uncased normalization
+        // (lowercase + NFD + strip combining marks) regardless — not identity.
+        println!(
+            "cargo:warning=model '{}' has no normalizer field; the ese runtime \
+             (src/pretokenizer.rs) applies BERT-uncased normalization (lowercase + NFD + \
+             strip combining marks) unconditionally. This is only correct for \
+             already-uncased inputs.",
+            model_name
+        );
         return;
     }
     match norm["type"].as_str() {
@@ -499,54 +504,68 @@ fn check_normalizer(norm: &serde_json::Value, model_name: &str) {
             }
         }
         Some("Lowercase") => {
-            // Plain lowercase is acceptable; normalization handled in pretokenizer
+            // Plain lowercase matches pretokenizer.rs (applied unconditionally)
         }
-        Some("NFC") | Some("NFD") | Some("NFKC") | Some("NFKD") => {
-            // Unicode normalization forms are fine
+        Some("NFD") => {
+            // NFD decomposition matches pretokenizer.rs (applied unconditionally)
         }
         Some("StripAccents") => {
-            // Accent stripping is fine (matches BERT-uncased behaviour)
+            // Accent stripping matches BERT-uncased behaviour in pretokenizer.rs
         }
-        Some("Replace") => {
-            // Simple replacement rules are generally fine
-        }
-        Some(other) => {
+        Some(other @ "NFC") | Some(other @ "NFKC") | Some(other @ "NFKD")
+        | Some(other @ "Replace") | Some(other) => {
             panic!(
-                "model '{}' uses a '{}' normalizer that the ese runtime (src/pretokenizer.rs) \
-                 does not implement. Supported: BertNormalizer{{lowercase:true}}, Sequence. \
-                 See docs/rfc-generalization.md for the generalization roadmap.",
+                "model '{}' uses a '{}' normalizer that src/pretokenizer.rs does not implement \
+                 (implemented: BertNormalizer{{lowercase:true}}, Sequence, Lowercase, NFD, \
+                 StripAccents). Refusing to compile — the runtime would silently diverge from \
+                 the reference tokenizer. See docs/rfc-generalization.md for the roadmap.",
                 model_name, other
             );
         }
         None => {
-            // No type field — treat as unknown/pass
+            // No type field on a non-null normalizer object — treat as unrecognized
+            panic!(
+                "model '{}' has a normalizer object with no 'type' field; ese cannot determine \
+                 whether the runtime matches. Refusing to compile.",
+                model_name
+            );
         }
     }
 }
 
 /// Derive ADD_SPECIAL_TOKENS from the tokenizer's post_processor section.
 ///
-/// TemplateProcessing or BertProcessing that references CLS/SEP → true.
-/// Absent or no special tokens → false.
+/// BertProcessing → true (always inserts CLS/SEP).
+/// TemplateProcessing → true only when the single or pair *template* references
+///   a SpecialToken with id "[CLS]" or "[SEP]". A special_tokens map entry that
+///   no template references does not get inserted at encode time, so the
+///   specials map alone is not a reliable signal.
+/// Absent post_processor or unrecognized type → false.
+///
+/// When the template references [CLS]/[SEP], also cross-checks that
+/// post_processor.special_tokens[*].ids[0] matches the vocabulary id for the
+/// same token. A mismatch (known for model2vec-compacted vocabs) means the
+/// reference tokenizer and ese would pool different rows — refused at compile
+/// time with a clear error.
 fn derive_add_special_tokens(tk: &serde_json::Value, model_name: &str) -> bool {
     let pp = &tk["post_processor"];
     if pp.is_null() || *pp == serde_json::Value::Null {
         return false;
     }
+    let vocab = tk["model"]["vocab"].as_object();
     let pp_type = pp["type"].as_str().unwrap_or("");
     match pp_type {
         "BertProcessing" => {
-            // BertProcessing always adds CLS and SEP
+            // BertProcessing always adds CLS and SEP; cross-check ids if available
+            cross_check_special_token_ids(pp, vocab, model_name);
             true
         }
         "TemplateProcessing" => {
-            // Check if the single/pair templates reference CLS or SEP special tokens
+            // Determine CLS/SEP use from the template arrays only, not the specials map
             let single = pp["single"].as_array();
             let pair = pp["pair"].as_array();
-            let specials = pp["special_tokens"].as_object();
 
-            // Check if any template element has a SpecialToken referencing CLS/SEP
-            let template_has_specials = |arr: Option<&Vec<serde_json::Value>>| -> bool {
+            let template_has_cls_sep = |arr: Option<&Vec<serde_json::Value>>| -> bool {
                 arr.map(|items| {
                     items.iter().any(|item| {
                         item.get("SpecialToken")
@@ -558,14 +577,11 @@ fn derive_add_special_tokens(tk: &serde_json::Value, model_name: &str) -> bool {
                 }).unwrap_or(false)
             };
 
-            let uses_cls_sep = template_has_specials(single) || template_has_specials(pair)
-                || specials.map(|s| s.contains_key("[CLS]") || s.contains_key("[SEP]")).unwrap_or(false);
-
+            let uses_cls_sep = template_has_cls_sep(single) || template_has_cls_sep(pair);
             if uses_cls_sep {
-                true
-            } else {
-                false
+                cross_check_special_token_ids(pp, vocab, model_name);
             }
+            uses_cls_sep
         }
         "RobertaProcessing" => {
             // RobertaProcessing uses BOS/EOS, not CLS/SEP — treat as false
@@ -586,6 +602,52 @@ fn derive_add_special_tokens(tk: &serde_json::Value, model_name: &str) -> bool {
                 model_name, pp_type
             );
             false
+        }
+    }
+}
+
+/// Cross-check that post_processor.special_tokens[token].ids[0] matches
+/// vocab[token] for [CLS] and [SEP]. Panics on mismatch; skips when ids
+/// field is absent (template-by-name path is fine).
+fn cross_check_special_token_ids(
+    pp: &serde_json::Value,
+    vocab: Option<&serde_json::Map<String, serde_json::Value>>,
+    model_name: &str,
+) {
+    let vocab = match vocab {
+        Some(v) => v,
+        None => return, // no vocab to cross-check against
+    };
+    let specials_map = match pp["special_tokens"].as_object() {
+        Some(m) => m,
+        None => return, // BertProcessing may not have a separate specials map
+    };
+    for token in &["[CLS]", "[SEP]"] {
+        let entry = match specials_map.get(*token) {
+            Some(e) => e,
+            None => continue,
+        };
+        // ids field absent → template-by-name path, no cross-check needed
+        let ids = match entry["ids"].as_array() {
+            Some(arr) => arr,
+            None => continue,
+        };
+        let pp_id = match ids.first().and_then(|v| v.as_u64()) {
+            Some(id) => id,
+            None => continue,
+        };
+        let vocab_id = match vocab.get(*token).and_then(|v| v.as_u64()) {
+            Some(id) => id,
+            None => continue, // token absent from vocab — caught elsewhere
+        };
+        if pp_id != vocab_id {
+            panic!(
+                "model '{}' post_processor stores id {} for {} but the vocab maps {} to {} — \
+                 the tokenizer.json is internally inconsistent (known for model2vec-compacted \
+                 vocabs); refusing to compile because the reference tokenizer and ese would \
+                 pool different rows.",
+                model_name, pp_id, token, token, vocab_id
+            );
         }
     }
 }
@@ -632,7 +694,11 @@ fn parse_safetensors(model_path: &Path) -> (Vec<Vec<f32>>, u64) {
     let tensor_key = non_meta_keys
         .into_iter()
         .next()
-        .unwrap_or_else(|| "embedding.weight".to_string());
+        .unwrap_or_else(|| panic!(
+            "safetensors file {} contains no non-metadata tensors; ese expects exactly one \
+             embedding weight tensor per file.",
+            model_path.display()
+        ));
 
     let tensor = &meta[&tensor_key];
     let dtype = tensor["dtype"].as_str().unwrap_or("F32");
@@ -716,18 +782,26 @@ fn bf16_to_f32(b: u16) -> f32 {
     f32::from_bits((b as u32) << 16)
 }
 
+/// Quantize one f32 value to u8. `as u8` saturates (Rust 1.45+), so no clamp needed.
+fn quantize_u8(v: f32, min: f32, scale: f32) -> u8 {
+    ((v - min) / scale).round() as u8
+}
+
+/// Quantize one f32 value to u16. `as u16` saturates (Rust 1.45+), so no clamp needed.
+fn quantize_u16(v: f32, min: f32, scale: f32) -> u16 {
+    ((v - min) / scale).round() as u16
+}
+
 fn quantize_f32_to_bytes(values: &[f32], min: f32, scale: f32) -> Vec<u8> {
     if cfg!(feature = "quant-8") {
         values
             .iter()
-            .map(|&v| (((v - min) / scale).round() as u8).clamp(0, 255))
-            .flat_map(|q| q.to_le_bytes())
+            .flat_map(|&v| quantize_u8(v, min, scale).to_le_bytes())
             .collect()
     } else if cfg!(feature = "quant-16") {
         values
             .iter()
-            .map(|&v| (((v - min) / scale).round() as u16).clamp(0, 65535))
-            .flat_map(|q| q.to_le_bytes())
+            .flat_map(|&v| quantize_u16(v, min, scale).to_le_bytes())
             .collect()
     } else {
         values.iter().flat_map(|v| v.to_le_bytes()).collect()
@@ -736,16 +810,10 @@ fn quantize_f32_to_bytes(values: &[f32], min: f32, scale: f32) -> Vec<u8> {
 
 fn format_quantized_param(values: &[f32], min: f32, scale: f32) -> String {
     if cfg!(feature = "quant-8") {
-        let q: Vec<u8> = values
-            .iter()
-            .map(|&v| ((v - min) / scale).round() as u8)
-            .collect();
+        let q: Vec<u8> = values.iter().map(|&v| quantize_u8(v, min, scale)).collect();
         format!("{q:?}")
     } else if cfg!(feature = "quant-16") {
-        let q: Vec<u16> = values
-            .iter()
-            .map(|&v| ((v - min) / scale).round() as u16)
-            .collect();
+        let q: Vec<u16> = values.iter().map(|&v| quantize_u16(v, min, scale)).collect();
         format!("{q:?}")
     } else {
         format!("{values:?}")
@@ -758,45 +826,35 @@ fn sha256_hex(bytes: &[u8]) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-fn download_if_missing(path: &Path, url: &str, expected_sha256: &str) {
+/// Download `url` to `path` if not already cached.
+/// When `expected_sha256` is `Some`, verify the hash on both the cached file and
+/// the freshly downloaded bytes; when `None`, skip hashing (warn emitted upstream).
+fn download_if_missing(path: &Path, url: &str, expected_sha256: Option<&str>) {
     if path.exists() {
-        let existing = fs::read(path).expect("failed to read cached file");
-        let actual = sha256_hex(&existing);
-        assert!(
-            actual == expected_sha256,
-            "SHA-256 mismatch for cached file {}\n  expected: {}\n  actual:   {}\n  url: {}\n  hint: the cache may be poisoned or truncated; delete {} and rebuild.",
-            path.display(),
-            expected_sha256,
-            actual,
-            url,
-            path.display()
-        );
+        if let Some(sha) = expected_sha256 {
+            let existing = fs::read(path).expect("failed to read cached file");
+            let actual = sha256_hex(&existing);
+            assert!(
+                actual == sha,
+                "SHA-256 mismatch for cached file {}\n  expected: {}\n  actual:   {}\n  url: {}\n  hint: the cache may be poisoned or truncated; delete {} and rebuild.",
+                path.display(), sha, actual, url, path.display()
+            );
+        }
         return;
     }
     eprintln!("cargo:warning=Downloading {}...", path.display());
     let resp = minreq::get(url).send().expect("download failed");
     assert!(resp.status_code == 200, "HTTP {}", resp.status_code);
     let bytes = resp.as_bytes();
-    let actual = sha256_hex(bytes);
-    assert!(
-        actual == expected_sha256,
-        "SHA-256 mismatch for downloaded file {}\n  expected: {}\n  actual:   {}\n  url: {}\n  hint: the upstream or cache may be poisoned.",
-        path.display(),
-        expected_sha256,
-        actual,
-        url
-    );
-    fs::write(path, bytes).unwrap();
-}
-
-fn download_if_missing_no_checksum(path: &Path, url: &str) {
-    if path.exists() {
-        return;
+    if let Some(sha) = expected_sha256 {
+        let actual = sha256_hex(bytes);
+        assert!(
+            actual == sha,
+            "SHA-256 mismatch for downloaded file {}\n  expected: {}\n  actual:   {}\n  url: {}\n  hint: the upstream or cache may be poisoned.",
+            path.display(), sha, actual, url
+        );
     }
-    eprintln!("cargo:warning=Downloading {}...", path.display());
-    let resp = minreq::get(url).send().expect("download failed");
-    assert!(resp.status_code == 200, "HTTP {}", resp.status_code);
-    fs::write(path, resp.as_bytes()).unwrap();
+    fs::write(path, bytes).unwrap();
 }
 
 fn trunc_dims() -> u64 {
@@ -861,11 +919,9 @@ fn shared_model_dir(out: &Path, cache_key: &str) -> PathBuf {
 #[cfg(feature = "tests")]
 fn oracle_weight(w: f32, global_min: f32, quant_scale: f32) -> f32 {
     if cfg!(feature = "quant-8") {
-        let q = (((w - global_min) / quant_scale).round() as u8).clamp(0, 255);
-        global_min + (q as f32) * quant_scale
+        global_min + quantize_u8(w, global_min, quant_scale) as f32 * quant_scale
     } else if cfg!(feature = "quant-16") {
-        let q = (((w - global_min) / quant_scale).round() as u16).clamp(0, 65535);
-        global_min + (q as f32) * quant_scale
+        global_min + quantize_u16(w, global_min, quant_scale) as f32 * quant_scale
     } else {
         w
     }

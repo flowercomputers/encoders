@@ -73,6 +73,7 @@ pub fn encode(
     let inputs: Vec<_> = inputs.into_iter().collect();
     let map_fn = |input: &_| encode_single(input);
 
+    // 16 is an empirically chosen batch-size cutoff; below it sequential wins.
     if inputs.len() >= 16 {
         return inputs.par_iter().map(map_fn).collect();
     }
@@ -82,12 +83,16 @@ pub fn encode(
 
 /// Encodes a single text into an embedding vector.
 ///
+/// The default model is uncased; input is lowercased before tokenization.
+/// Case-insensitivity is a property of the compiled normalizer, not the API.
+/// Output is L2-normalized when the crate is built with `ESE_NORMALIZE_OUTPUT=1`.
+///
 /// # Examples
 ///
 /// ```
 /// let a = ese::encode_single("rustacean");
 /// let b = ese::encode_single("Rustacean");
-/// assert_eq!(a, b, "encoding is case-insensitive");
+/// assert_eq!(a, b, "encoding is case-insensitive for the default (uncased) model");
 ///
 /// let v = ese::encode_single("hello world");
 /// assert_eq!(v.len(), ese::DIMENSIONS);
@@ -99,6 +104,7 @@ pub fn encode_single(input: impl AsRef<str>) -> [f32; DIMENSIONS] {
     if lookup::ADD_SPECIAL_TOKENS {
         wordpiece::accumulate(&mut vector, &lookup::CLS);
     }
+    // Pre-count CLS + SEP; the SEP embedding is added after the loop.
     let mut token_count: u32 = if lookup::ADD_SPECIAL_TOKENS { 2 } else { 0 };
     let mut normalized = String::with_capacity(text.len());
     pretokenizer::normalize_into(text, &mut normalized);

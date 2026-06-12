@@ -4,13 +4,14 @@
 your Rust binary. It is a small, purpose-built runtime for the static embedding
 model deployment pipeline described in [Much faster static embedding](https://www.flowercomputer.com/news/fast-static-embedding/).
 
-The crate exposes two public encoding functions:
+The crate exposes two public encoding functions and two compile-time constants:
 
 - `ese::encode_single(text)` encodes one string.
 - `ese::encode(texts)` encodes many strings.
+- `ese::DIMENSIONS` — the number of dimensions per vector (set by `dim-*` features).
+- `ese::MODEL_NAME` — the model identifier compiled into this build.
 
-Both return `f32` vectors with a compile-time dimension count exposed as
-`ese::DIMENSIONS`.
+Both functions return `f32` vectors with `ese::DIMENSIONS` elements.
 
 ## What this is
 
@@ -50,7 +51,9 @@ ese = { path = "../ese", features = ["rayon", "dim-512", "quant-8"] }
 ```
 
 The first build downloads the model weights and tokenizer from Hugging Face into
-`target/ese-cache`. Later builds reuse the cached files.
+`target/ese-cache`. Later builds reuse the cached files. Note: `cargo clean`
+wipes `target/`, including the cache. Set `ESE_CACHE_DIR` to a path outside
+`target/` (e.g. `~/.cache/ese`) to persist the cache across cleans.
 
 Encode one string:
 
@@ -212,21 +215,23 @@ The current Python wrapper builds `ese` with `rayon`, `dim-512`, and `quant-8`.
 
 ## Running tests
 
-Run the workspace tests:
+Run the tests (requires network access to crates.io and huggingface.co on first
+run to download the default model):
 
 ```console
-cargo test --workspace
+cargo test
 ```
 
 Run the optional embedding reference check:
 
 ```console
-cargo test -p ese --features tests
+cargo test --features tests
 ```
 
 The optional test uses the tokenizer crate at build time to generate reference
 outputs for a small set of inputs, then checks that `ese` produces matching
-embedding directions.
+embedding directions. To verify the workspace builds without running tests,
+use `cargo check --workspace`.
 
 ## Performance note
 
