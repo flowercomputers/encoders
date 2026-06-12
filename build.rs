@@ -1,3 +1,4 @@
+use sha2::{Digest, Sha256};
 use std::{
     collections::HashSet,
     env,
@@ -5,8 +6,12 @@ use std::{
     path::{Path, PathBuf},
 };
 
-static MODEL_URL: &'static str = "https://huggingface.co/sentence-transformers/static-retrieval-mrl-en-v1/resolve/main/0_StaticEmbedding/model.safetensors";
-static TOKENIZER_URL: &'static str = "https://huggingface.co/sentence-transformers/static-retrieval-mrl-en-v1/resolve/main/0_StaticEmbedding/tokenizer.json";
+// Pinned to upstream revision f60985c706f192d45d218078e49e5a8b6f15283a (resolved 2026-06-12).
+// To bump: update the revision in both URLs, re-download, recompute the SHA-256s.
+static MODEL_URL: &'static str = "https://huggingface.co/sentence-transformers/static-retrieval-mrl-en-v1/resolve/f60985c706f192d45d218078e49e5a8b6f15283a/0_StaticEmbedding/model.safetensors";
+static TOKENIZER_URL: &'static str = "https://huggingface.co/sentence-transformers/static-retrieval-mrl-en-v1/resolve/f60985c706f192d45d218078e49e5a8b6f15283a/0_StaticEmbedding/tokenizer.json";
+static MODEL_SHA256: &str = "164fc63ee9f9267be7378fcbd7df99d09788a2f45244c92aa99ae5a574925716";
+static TOKENIZER_SHA256: &str = "d241a60d5e8f04cc1b2b3e9ef7a4921b27bf526d9f6050ab90f9267a1f9e5c66";
 
 fn main() {
     let out = Path::new(&env::var("OUT_DIR").unwrap()).to_path_buf();
@@ -18,8 +23,8 @@ fn main() {
     let model_path = &model_dir.join("model.safetensors");
     let tokenizer_path = &model_dir.join("tokenizer.json");
 
-    download_if_missing(model_path, MODEL_URL);
-    download_if_missing(tokenizer_path, TOKENIZER_URL);
+    download_if_missing(model_path, MODEL_URL, MODEL_SHA256);
+    download_if_missing(tokenizer_path, TOKENIZER_URL, TOKENIZER_SHA256);
     let (weights, dims) = parse_safetensors(model_path);
 
     println!(
@@ -345,14 +350,41 @@ fn format_quantized_param(values: &[f32], min: f32, scale: f32) -> String {
     }
 }
 
-fn download_if_missing(path: &Path, url: &str) {
+fn sha256_hex(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    format!("{:x}", hasher.finalize())
+}
+
+fn download_if_missing(path: &Path, url: &str, expected_sha256: &str) {
     if path.exists() {
+        let existing = fs::read(path).expect("failed to read cached file");
+        let actual = sha256_hex(&existing);
+        assert!(
+            actual == expected_sha256,
+            "SHA-256 mismatch for cached file {}\n  expected: {}\n  actual:   {}\n  url: {}\n  hint: the cache may be poisoned or truncated; delete {} and rebuild.",
+            path.display(),
+            expected_sha256,
+            actual,
+            url,
+            path.display()
+        );
         return;
     }
     eprintln!("cargo:warning=Downloading {}...", path.display());
     let resp = minreq::get(url).send().expect("download failed");
     assert!(resp.status_code == 200, "HTTP {}", resp.status_code);
-    fs::write(path, resp.as_bytes()).unwrap();
+    let bytes = resp.as_bytes();
+    let actual = sha256_hex(bytes);
+    assert!(
+        actual == expected_sha256,
+        "SHA-256 mismatch for downloaded file {}\n  expected: {}\n  actual:   {}\n  url: {}\n  hint: the upstream or cache may be poisoned.",
+        path.display(),
+        expected_sha256,
+        actual,
+        url
+    );
+    fs::write(path, bytes).unwrap();
 }
 
 fn trunc_dims() -> u64 {

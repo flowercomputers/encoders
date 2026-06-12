@@ -40,6 +40,7 @@ unicode-general-category = "1"
 serde_json = "1"
 tokenizers = { version = "0", optional = true }
 minreq = { version = "2", features = ["https-native"] }
+sha2 = "0.10"
 
 [dev-dependencies]
 criterion = { version = "0", features = ["html_reports"] }
