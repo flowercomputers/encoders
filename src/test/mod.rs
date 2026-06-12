@@ -90,7 +90,19 @@ mod optional {
         };
         let embeddings = crate::encode(TEST_INPUTS);
         for (i, (want, got)) in TEST_OUTPUTS.iter().zip(embeddings.iter()).enumerate() {
-            let sim = cosine_similarity(want, got);
+            // When the oracle produces an all-zero vector (e.g. empty input with
+        // ADD_SPECIAL_TOKENS=false), cosine similarity is undefined (NaN).
+        // In that case verify that the runtime also produces all-zeros.
+        let want_norm: f32 = want.iter().map(|x| x * x).sum::<f32>().sqrt();
+        let got_norm: f32 = got.iter().map(|x| x * x).sum::<f32>().sqrt();
+        if want_norm < f32::EPSILON {
+            assert!(
+                got_norm < f32::EPSILON,
+                "oracle produced zero vector for {i} but runtime produced non-zero (norm={got_norm})"
+            );
+            continue;
+        }
+        let sim = cosine_similarity(want, got);
             assert!(
                 sim > threshold,
                 "cosine similarity for {i} below threshold: {sim}"
