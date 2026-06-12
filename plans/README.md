@@ -14,7 +14,7 @@ Repo verification baseline (measured at `5155c13`): `cargo test` passes;
 | Plan | Title | Priority | Effort | Depends on | Status |
 |------|-------|----------|--------|------------|--------|
 | 001 | Reconcile the five outstanding codex/* branches | P1 | S-M | — | DONE (merged to `advisor/improvements` at `ab6f2b8`, 2026-06-12; reviewed) |
-| 002 | Add CI and quant-aware parity thresholds | P1 | M | 001 | TODO |
+| 002 | Add CI and quantization-aware parity oracle | P1 | M | 001 | DONE (merged to `advisor/improvements` at `fa965b3`, 2026-06-12; reviewed; v2 after first dispatch STOPPED on the 0.9408 quant-8 floor) |
 | 003 | Pin + checksum model downloads | P1 | S | 001, 002 | TODO |
 | 004 | Small correctness batch (special tokens by name, exact scaling, portable defaults, hygiene) | P2 | M | 002 | TODO |
 | 005 | Generalization roadmap RFC + Unigram-oracle spike | P1 (read) | M | 002 (spike only) | TODO |
@@ -54,6 +54,13 @@ REJECTED (with one-line rationale)
   010-emitters-wasm-and-packs (layer D) — NOT YET PLANNED.
 
 ## Post-001 facts for later executors
+
+- **Dispatch gotcha (2026-06-12)**: agent worktrees are based on `master`
+  (the default branch), NOT on `advisor/improvements`. Every executor
+  prompt must include as step 0: `git reset --hard advisor/improvements`
+  (safe — the worktree branch is fresh). Otherwise the executor edits and
+  "verifies" against pre-merge code (this produced a false "ESE_CACHE_DIR
+  doesn't exist" report during the 002 dispatch).
 
 - All plan work aggregates on the `advisor/improvements` branch (user
   decision, 2026-06-12); master stays untouched until the user merges.
