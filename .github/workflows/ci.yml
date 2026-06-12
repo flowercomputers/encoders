@@ -71,6 +71,33 @@ jobs:
       - name: Run NIFE acceptance tests
         run: cargo test --features tests,dim-1024
 
+  potion-multilingual-acceptance:
+    name: Unigram acceptance (minishlab/potion-multilingual-128M)
+    runs-on: ubuntu-latest
+    env:
+      ESE_MODEL: "minishlab/potion-multilingual-128M@73908c3438cf03b6a01bcb9611d62b23d0726f08"
+      ESE_MODEL_SHA256: "14b5eb39cb4ce5666da8ad1f3dc6be4346e9b2d601c073302fa0a31bf7943397"
+      ESE_TOKENIZER_SHA256: "19f1909063da3cfe3bd83a782381f040dccea475f4816de11116444a73e1b6a1"
+      ESE_NORMALIZE_OUTPUT: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set model cache dir
+        run: echo "ESE_CACHE_DIR=$HOME/.cache/ese" >> "$GITHUB_ENV"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Cache potion-multilingual model files
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ese
+          key: hf-model-potion-ml-73908c3
+
+      - name: Run potion-multilingual acceptance tests
+        run: cargo test --features tests,dim-256
+
   workspace-check:
     name: workspace check
     runs-on: ubuntu-latest

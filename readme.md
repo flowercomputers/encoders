@@ -297,14 +297,27 @@ When `ESE_MODEL_SHA256` or `ESE_TOKENIZER_SHA256` are omitted, the build
 emits a `cargo:warning` — checksums are optional for local experimentation
 but required for reproducible production builds.
 
-### WordPiece-only constraint
+### Supported tokenizer families
 
-`ese` currently compiles WordPiece vocabulary models only. The build script
-validates the tokenizer type and normalizer at compile time and emits a clear
-error for unsupported families (Unigram, BPE, etc.). Unigram and BPE support
-are planned — see `docs/rfc-generalization.md`.
+`ese` compiles WordPiece and Unigram (SentencePiece) vocabulary models. The
+build script validates the tokenizer type and normalizer shapes at compile time
+and emits a clear error for unsupported families (BPE, etc.).
 
-### Worked example: NIFE-mxbai-embed-large-v1
+**WordPiece** models must use a `BertNormalizer` or compatible normalizer chain.
+The default model (`sentence-transformers/static-retrieval-mrl-en-v1`) is
+WordPiece.
+
+**Unigram** models must use:
+- A `Precompiled` charsmap normalizer (optionally wrapped in a `Sequence`
+  with `Replace`/`Strip` steps for space collapsing and trimming).
+- A `Metaspace` pre-tokenizer with the `▁` replacement character, `always`
+  prepend, and `split: false`.
+- `byte_fallback: false`.
+
+BPE and other tokenizer families are not yet supported — see
+`docs/rfc-generalization.md`.
+
+### Worked example: NIFE-mxbai-embed-large-v1 (WordPiece)
 
 ```sh
 ESE_MODEL=stephantulkens/NIFE-mxbai-embed-large-v1@970a0151f3faeddbab5c68be38d52bbc5ea719ab \
@@ -316,6 +329,16 @@ cargo build --features dim-1024
 
 Replace `<sha256-of-model.safetensors>` and `<sha256-of-tokenizer.json>` with
 the SHA-256 digests computed from the downloaded files (`shasum -a 256 <file>`).
+
+### Worked example: potion-multilingual-128M (Unigram)
+
+```sh
+ESE_MODEL=minishlab/potion-multilingual-128M@73908c3438cf03b6a01bcb9611d62b23d0726f08 \
+ESE_MODEL_SHA256=14b5eb39cb4ce5666da8ad1f3dc6be4346e9b2d601c073302fa0a31bf7943397 \
+ESE_TOKENIZER_SHA256=19f1909063da3cfe3bd83a782381f040dccea475f4816de11116444a73e1b6a1 \
+ESE_NORMALIZE_OUTPUT=1 \
+cargo build --features dim-256
+```
 
 ### Using a local artifact directory
 
@@ -343,9 +366,11 @@ At build time, `build.rs`:
 
 At runtime, `ese`:
 
-1. Normalizes input text.
+1. Normalizes input text (charsmap + space collapsing for Unigram models;
+   lowercasing + accent stripping for WordPiece models).
 2. Splits text into pre-tokens.
-3. Applies a WordPiece-style lookup.
+3. For WordPiece models: applies the WordPiece subword algorithm.
+   For Unigram models: runs a Viterbi segmentation over the vocabulary.
 4. Accumulates token vectors.
 5. Returns one dense `f32` vector per input string.
 
@@ -357,8 +382,8 @@ without loading an ML framework in the hot path.
 - The crate is currently a preview.
 - The default model is pinned to a specific commit SHA for reproducibility.
   Custom models require a pinned `@<revision>` for the same reason.
-- Only WordPiece vocabulary models are supported. Unigram and BPE support
-  are planned (see `docs/rfc-generalization.md`).
+- WordPiece and Unigram (SentencePiece) vocabulary models are supported.
+  BPE support is planned (see `docs/rfc-generalization.md`).
 - The Python wrapper is preliminary and has less documentation than the Rust
   crate.
 - `ese` does not normalize vectors by default. If your search stack expects
