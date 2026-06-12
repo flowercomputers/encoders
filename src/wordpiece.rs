@@ -29,7 +29,7 @@ pub fn wordpiece_accumulate(
                 crate::lookup::lookup(&word[start..end])
             } else {
                 wp_buf.clear();
-                wp_buf.push_str("##");
+                wp_buf.push_str(crate::lookup::CONTINUING_PREFIX);
                 wp_buf.push_str(&word[start..end]);
                 crate::lookup::lookup(wp_buf.as_str())
             };
