@@ -94,6 +94,8 @@ pub fn encode(
 /// tokenization. For Unigram/SentencePiece models, case handling depends on the
 /// normalizer compiled into the build.
 /// Output is L2-normalized when the crate is built with `ESE_NORMALIZE_OUTPUT=1`.
+/// When built with `ESE_SKIP_UNK=1`, UNK-id tokens are excluded from mean pooling,
+/// matching the behavior of `model2vec.StaticModel`; use this for distilled model2vec artifacts.
 ///
 /// # Examples
 ///

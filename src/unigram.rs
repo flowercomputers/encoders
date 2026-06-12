@@ -319,8 +319,11 @@ fn viterbi_segment(sentence: &str) -> Vec<&'static lookup::Param> {
             in_unk_run = true;
         } else {
             if in_unk_run {
-                // Flush fused UNK run: emit one UNK weight row.
-                results.push(&lookup::UNK);
+                // Flush fused UNK run: emit one UNK weight row — unless SKIP_UNK,
+                // which drops UNK rows from pooling to match model2vec.StaticModel behavior.
+                if !lookup::SKIP_UNK {
+                    results.push(&lookup::UNK);
+                }
                 in_unk_run = false;
             }
             if let Some(w) = node.weight {
@@ -332,7 +335,7 @@ fn viterbi_segment(sentence: &str) -> Vec<&'static lookup::Param> {
     }
 
     // Flush any UNK run that reaches the beginning of the sentence.
-    if in_unk_run {
+    if in_unk_run && !lookup::SKIP_UNK {
         results.push(&lookup::UNK);
     }
 

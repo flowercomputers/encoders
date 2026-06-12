@@ -53,6 +53,7 @@ fn resolve_model() -> ResolvedModel {
     println!("cargo:rerun-if-env-changed=ESE_MODEL_FILE");
     println!("cargo:rerun-if-env-changed=ESE_TOKENIZER_FILE");
     println!("cargo:rerun-if-env-changed=ESE_NORMALIZE_OUTPUT");
+    println!("cargo:rerun-if-env-changed=ESE_SKIP_UNK");
 
     // 1. ESE_MODEL_DIR: local directory, no download, no checksum
     if let Ok(dir_str) = env::var("ESE_MODEL_DIR") {
@@ -193,22 +194,32 @@ fn main() {
 
     // NORMALIZE_OUTPUT: env var ESE_NORMALIZE_OUTPUT=1
     let normalize_output = env::var("ESE_NORMALIZE_OUTPUT").map(|v| v == "1").unwrap_or(false);
+    // SKIP_UNK: env var ESE_SKIP_UNK=1 — exclude UNK-id rows from mean pooling,
+    // matching model2vec.StaticModel.tokenize() which filters UNK before pooling.
+    // Only set this for distilled model2vec artifacts; default (false) keeps the
+    // original ese behavior (UNK rows are included in the mean).
+    let skip_unk = env::var("ESE_SKIP_UNK").map(|v| v == "1").unwrap_or(false);
 
     let model_type = tk["model"]["type"].as_str().unwrap_or("WordPiece");
 
     if model_type == "Unigram" {
-        build_unigram(&out, &tk, &model.name, &weights, dims as usize, normalize_output);
+        build_unigram(&out, &tk, &model.name, &weights, dims as usize, normalize_output, skip_unk);
         #[cfg(feature = "tests")]
-        generate_testdata(
-            &out,
-            &weights,
-            dims as usize,
-            &tokenizer_path,
-            0.0,
-            1.0,
-            false, // Unigram models never add CLS/SEP
-            normalize_output,
-        );
+        {
+            let unk_id = tk["model"]["unk_id"].as_u64().unwrap_or(0) as usize;
+            generate_testdata(
+                &out,
+                &weights,
+                dims as usize,
+                &tokenizer_path,
+                0.0,
+                1.0,
+                false, // Unigram models never add CLS/SEP
+                normalize_output,
+                skip_unk,
+                unk_id,
+            );
+        }
         return;
     }
 
@@ -429,6 +440,10 @@ pub const MAX_WORD_LEN: usize = {max_word_len};\n\
 pub const CONTINUING_PREFIX: &str = {continuing_prefix:?};\n\
 pub const ADD_SPECIAL_TOKENS: bool = {add_special_tokens};\n\
 pub const NORMALIZE_OUTPUT: bool = {normalize_output};\n\
+// When SKIP_UNK=true, UNK-id rows are excluded from pooling (neither accumulated nor counted).
+// Matches model2vec.StaticModel.tokenize() behavior for distilled model2vec artifacts.
+// Default (false) pools UNK rows, which is correct for sentence-transformers static models.
+#[allow(dead_code)] pub const SKIP_UNK: bool = {skip_unk};\n\
 pub const DTYPE_SIZE: usize = {dtype_sz};\n\
 pub const QUANT_MIN: f32 = {global_min:?};\n\
 pub const QUANT_SCALE: f32 = {quant_scale:?};\n\
@@ -467,6 +482,8 @@ pub const MODEL_NAME: &str = {model_name:?};\n\
         quant_scale,
         add_special_tokens,
         normalize_output,
+        skip_unk,
+        unk_id,
     );
 }
 
@@ -482,6 +499,7 @@ fn build_unigram(
     weights: &[Vec<f32>],
     dims: usize,
     normalize_output: bool,
+    skip_unk: bool,
 ) {
     // ── Parse vocab: array of [token, score] pairs ────────────────────────────
     let vocab_arr = tk["model"]["vocab"]
@@ -707,6 +725,10 @@ pub const MAX_WORD_LEN: usize = 0;\n\
 pub const CONTINUING_PREFIX: &str = \"##\";\n\
 pub const ADD_SPECIAL_TOKENS: bool = false;\n\
 pub const NORMALIZE_OUTPUT: bool = {normalize_output};\n\
+// When SKIP_UNK=true, UNK rows are excluded from pooling (neither accumulated nor counted).
+// Matches model2vec.StaticModel.tokenize() behavior for distilled model2vec artifacts.
+// Default (false) pools UNK rows, which is correct for sentence-transformers static models.
+#[allow(dead_code)] pub const SKIP_UNK: bool = {skip_unk};\n\
 pub const DTYPE_SIZE: usize = {dtype_sz};\n\
 pub const QUANT_MIN: f32 = {global_min:?};\n\
 pub const QUANT_SCALE: f32 = {quant_scale:?};\n\
@@ -1438,6 +1460,8 @@ fn generate_testdata(
     quant_scale: f32,
     add_special_tokens: bool,
     normalize_output: bool,
+    skip_unk: bool,
+    unk_id: usize,
 ) {
     let tokenizer =
         tokenizers::Tokenizer::from_file(tokenizer_path).expect("failed to load tokenizer");
@@ -1462,9 +1486,15 @@ fn generate_testdata(
     for &input in &inputs {
         code.push_str(&format!("    {:?},\n", input));
         let tokens = tokenizer.encode(input, add_special_tokens).unwrap();
-        let token_ids = tokens.get_ids();
+        // When skip_unk, filter UNK ids before pooling — mirrors model2vec.StaticModel.tokenize()
+        // which drops UNK tokens before mean-pooling. Default (false) includes them.
+        let token_ids: Vec<u32> = if skip_unk {
+            tokens.get_ids().iter().copied().filter(|&id| id as usize != unk_id).collect()
+        } else {
+            tokens.get_ids().to_vec()
+        };
         let mut vector = vec![0.0f32; _dims];
-        for &tok_id in token_ids {
+        for &tok_id in &token_ids {
             for (v, &w) in vector
                 .iter_mut()
                 .zip(unsafe { weights.get_unchecked(tok_id as usize) }.iter())
