@@ -224,11 +224,8 @@ fn viterbi_segment(sentence: &str) -> Vec<&'static lookup::Param> {
     let size = sentence.len();
 
     // unk_score = min_score_in_vocab - K_UNK_PENALTY (10.0).
-    // We compute the minimum by scanning SCORES_RAW (scores.bin, TABLE_SIZE f32 values).
-    // Empty slots contain 0.0; real scores are negative log-probs (< 0).
-    // min_score is the most-negative value found.
-    let min_score = scan_min_score();
-    let unk_score = min_score - 10.0f32;
+    // MIN_SCORE is the most-negative vocab log-prob score, emitted at build time.
+    let unk_score = lookup::MIN_SCORE - 10.0f32;
 
     // dp[i]: best path ending at byte position i.
     // Positions that are not yet reachable have starts_at = None.
@@ -343,17 +340,6 @@ fn viterbi_segment(sentence: &str) -> Vec<&'static lookup::Param> {
     results
 }
 
-/// Scan SCORES_RAW to find the minimum (most-negative) score across all vocab slots.
-/// Empty slots contain 0.0f32 (set by build.rs). Real scores are negative log-probs.
-/// Returns the minimum negative value; returns 0.0 if no negative values found.
-fn scan_min_score() -> f32 {
-    // SCORES_RAW = TABLE_SIZE * 4 bytes of little-endian f32.
-    // We expose it from lookup.rs via a helper; here we call it directly
-    // since SCORES_RAW is declared as a static in lookup.rs.
-    // Instead, we expose a helper function from lookup.rs.
-    lookup::scan_min_score_from_raw()
-}
-
 // ── Pool and mean ─────────────────────────────────────────────────────────────
 
 /// Mean-pool the weight rows for the Viterbi token sequence, then optionally L2-normalize.
@@ -366,13 +352,7 @@ fn pool_and_mean(weight_rows: &[&'static lookup::Param]) -> [f32; lookup::DIMENS
         return vector;
     }
     for row in weight_rows {
-        // Dequantize each element using the compiled quantization parameters.
-        // For f32 builds: QUANT_MIN=0.0, QUANT_SCALE=1.0, so this is just p as f32.
-        // For quant-8 builds: p is u8, dequantize to f32.
-        // For quant-16 builds: p is u16, dequantize to f32.
-        for (v, &p) in vector.iter_mut().zip(row.iter()) {
-            *v += lookup::QUANT_MIN + (p as f32) * lookup::QUANT_SCALE;
-        }
+        crate::wordpiece::accumulate(&mut vector, row);
     }
     let scale = 1.0 / count as f32;
     for v in &mut vector {

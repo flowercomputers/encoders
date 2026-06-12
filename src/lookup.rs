@@ -64,25 +64,6 @@ pub fn lookup_with_score(key: &str) -> Option<(&'static Param, f32)> {
     }
 }
 
-/// Scan SCORES_RAW for the minimum (most-negative) f32 value.
-/// Called from unigram.rs to compute unk_score = min_score - K_UNK_PENALTY.
-/// Empty PHF slots contain 0.0; real Unigram scores are negative log-probs.
-/// For WordPiece builds IS_UNIGRAM=false so this is dead code.
-#[allow(dead_code)]
-pub fn scan_min_score_from_raw() -> f32 {
-    let mut min_score = 0.0f32;
-    let mut i = 0usize;
-    while i + 4 <= SCORES_RAW.len() {
-        let bytes = [SCORES_RAW[i], SCORES_RAW[i + 1], SCORES_RAW[i + 2], SCORES_RAW[i + 3]];
-        let v = f32::from_le_bytes(bytes);
-        if v < min_score {
-            min_score = v;
-        }
-        i += 4;
-    }
-    min_score
-}
-
 #[inline(always)]
 fn hash(key: &[u8], seed: u64) -> u64 {
     let mut h = seed ^ 0x517cc1b727220a95;

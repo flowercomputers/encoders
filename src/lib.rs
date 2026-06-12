@@ -24,6 +24,11 @@ pub const DIMENSIONS: usize = lookup::DIMENSIONS;
 /// ```
 pub const MODEL_NAME: &str = lookup::MODEL_NAME;
 
+/// IS_UNIGRAM is true when the compiled model uses the Unigram/SentencePiece tokenizer,
+/// and false for WordPiece models. Unigram models are typically case-sensitive.
+#[allow(dead_code)]
+pub const IS_UNIGRAM: bool = lookup::IS_UNIGRAM;
+
 /// Encodes a batch of texts into embedding vectors.
 ///
 /// Each input string is independently normalized, tokenized, and encoded.
@@ -91,6 +96,15 @@ pub fn encode(
 /// Output is L2-normalized when the crate is built with `ESE_NORMALIZE_OUTPUT=1`.
 ///
 /// # Examples
+///
+/// ```
+/// // Only holds for uncased (WordPiece) models; Unigram models are case-sensitive.
+/// if !ese::IS_UNIGRAM {
+///     let a = ese::encode_single("rustacean");
+///     let b = ese::encode_single("Rustacean");
+///     assert_eq!(a, b, "encoding is case-insensitive for the default (uncased) model");
+/// }
+/// ```
 ///
 /// ```
 /// let v = ese::encode_single("hello world");

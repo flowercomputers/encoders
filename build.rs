@@ -436,6 +436,7 @@ pub const MODEL_NAME: &str = {model_name:?};\n\
 // Unigram-specific constants. Dead in WordPiece builds; the compiler elides the
 // Unigram code path via the IS_UNIGRAM const branch in encode_single.
 #[allow(dead_code)] pub const IS_UNIGRAM: bool = false;\n\
+#[allow(dead_code)] pub const MIN_SCORE: f32 = 0.0;\n\
 #[allow(dead_code)] pub const MAX_TOKEN_CHARS: usize = 0;\n\
 #[allow(dead_code)] pub const UNK_ID: usize = {unk_id};\n\
 #[allow(dead_code)] pub const PAD_CHARS: &[char] = &[];\n\
@@ -507,12 +508,16 @@ fn build_unigram(
     // Charsmap base64
     let mut charsmap_b64: Option<String> = None;
 
+    let mut min_score = 0.0f32; // tracks the most-negative vocab log-prob score
     for (id, entry) in vocab_arr.iter().enumerate() {
         let token = entry[0].as_str().unwrap_or("").to_string();
         let score = entry[1].as_f64().unwrap_or(0.0) as f32;
         let char_len = token.chars().count();
         if char_len > max_token_chars {
             max_token_chars = char_len;
+        }
+        if score < min_score {
+            min_score = score;
         }
         entries.push((token, id));
         vocab_scores.push(score);
@@ -708,6 +713,7 @@ pub const QUANT_SCALE: f32 = {quant_scale:?};\n\
 pub const MODEL_NAME: &str = {model_name:?};\n\
 // Unigram-specific constants. Some may be dead in certain feature combinations.\n\
 #[allow(dead_code)] pub const IS_UNIGRAM: bool = true;\n\
+#[allow(dead_code)] pub const MIN_SCORE: f32 = {min_score:?};\n\
 #[allow(dead_code)] pub const MAX_TOKEN_CHARS: usize = {max_token_chars};\n\
 #[allow(dead_code)] pub const UNK_ID: usize = {unk_id};\n\
 #[allow(dead_code)] pub const PAD_CHARS: &[char] = &[{pad_chars_str}];\n\
