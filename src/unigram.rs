@@ -53,8 +53,8 @@ pub fn encode_single(text: &str) -> [f32; lookup::DIMENSIONS] {
         return [0.0f32; lookup::DIMENSIONS];
     }
     let with_metaspace = apply_metaspace(&normalized);
-    let weight_rows = viterbi_segment(&with_metaspace);
-    pool_and_mean(&weight_rows)
+    let slots = viterbi_segment(&with_metaspace);
+    pool_and_mean(&slots)
 }
 
 // ── Normalizer ────────────────────────────────────────────────────────────────
@@ -215,8 +215,9 @@ fn apply_metaspace(s: &str) -> String {
 /// fuse_unk=true: consecutive UNK-id tokens are collapsed to one UNK weight row
 /// in the output (matching tokenizers encode_optimized fuse logic).
 ///
-/// Returns a Vec of static Param references for pooling.
-fn viterbi_segment(sentence: &str) -> Vec<&'static lookup::Param> {
+/// Returns a Vec of Option<&'static Slot> for pooling.
+/// None = fused UNK; Some(slot) = real vocab token with per-row quant params.
+fn viterbi_segment(sentence: &str) -> Vec<Option<&'static lookup::Slot>> {
     if sentence.is_empty() {
         return vec![];
     }
@@ -229,16 +230,18 @@ fn viterbi_segment(sentence: &str) -> Vec<&'static lookup::Param> {
 
     // dp[i]: best path ending at byte position i.
     // Positions that are not yet reachable have starts_at = None.
+    // slot stores a reference to the full Slot so pool_and_mean can read per-row params
+    // in quant builds. In f32 builds the Slot has no extra fields (same as Param ref).
     struct Node {
         best_path_score: f32,
         starts_at: Option<usize>,
-        weight: Option<&'static lookup::Param>,
+        slot: Option<&'static lookup::Slot>,
         is_unk: bool,
     }
     let make_node = || Node {
         best_path_score: 0.0,
         starts_at: None,
-        weight: None,
+        slot: None,
         is_unk: false,
     };
 
@@ -269,14 +272,14 @@ fn viterbi_segment(sentence: &str) -> Vec<&'static lookup::Param> {
             let candidate = &remaining[..byte_end];
             let key_pos = starts_at + byte_end;
 
-            if let Some((weight, score)) = lookup::lookup_with_score(candidate) {
+            if let Some((slot, score)) = lookup::lookup_slot_with_score(candidate) {
                 let candidate_score = score + score_here;
                 let target = &mut dp[key_pos];
                 // Strict > ties broken by first (shortest) candidate.
                 if target.starts_at.is_none() || candidate_score > target.best_path_score {
                     target.best_path_score = candidate_score;
                     target.starts_at = Some(starts_at);
-                    target.weight = Some(weight);
+                    target.slot = Some(slot);
                     target.is_unk = false;
                 }
                 if !has_single_node && byte_end == mblen {
@@ -290,13 +293,14 @@ fn viterbi_segment(sentence: &str) -> Vec<&'static lookup::Param> {
         }
 
         // If no single-char vocab match exists, insert an UNK node.
+        // UNK nodes use the UNK const directly in pool_and_mean (slot=None, is_unk=true).
         if !has_single_node {
             let target = &mut dp[starts_at + mblen];
             let candidate_score = unk_score + score_here;
             if target.starts_at.is_none() || candidate_score > target.best_path_score {
                 target.best_path_score = candidate_score;
                 target.starts_at = Some(starts_at);
-                target.weight = Some(&lookup::UNK);
+                target.slot = None; // UNK: use lookup::UNK const + UNK_MIN/UNK_SCALE in pool_and_mean
                 target.is_unk = true;
             }
         }
@@ -304,8 +308,9 @@ fn viterbi_segment(sentence: &str) -> Vec<&'static lookup::Param> {
         starts_at += mblen;
     }
 
-    // Backtrack from end to start.
-    let mut results: Vec<&'static lookup::Param> = vec![];
+    // Backtrack from end to start, collecting Option<&Slot> items.
+    // None = fused UNK token; Some(slot) = real vocab token.
+    let mut results_opt: Vec<Option<&'static lookup::Slot>> = vec![];
     let mut ends_at = size;
     let mut in_unk_run = false;
 
@@ -322,13 +327,11 @@ fn viterbi_segment(sentence: &str) -> Vec<&'static lookup::Param> {
                 // Flush fused UNK run: emit one UNK weight row — unless SKIP_UNK,
                 // which drops UNK rows from pooling to match model2vec.StaticModel behavior.
                 if !lookup::SKIP_UNK {
-                    results.push(&lookup::UNK);
+                    results_opt.push(None); // None = UNK
                 }
                 in_unk_run = false;
             }
-            if let Some(w) = node.weight {
-                results.push(w);
-            }
+            results_opt.push(node.slot); // Some(slot) = real token, None = UNK (shouldn't happen here)
         }
 
         ends_at = s_at;
@@ -336,26 +339,52 @@ fn viterbi_segment(sentence: &str) -> Vec<&'static lookup::Param> {
 
     // Flush any UNK run that reaches the beginning of the sentence.
     if in_unk_run && !lookup::SKIP_UNK {
-        results.push(&lookup::UNK);
+        results_opt.push(None); // None = UNK
     }
 
-    results.reverse();
-    results
+    results_opt.reverse();
+    results_opt
 }
 
 // ── Pool and mean ─────────────────────────────────────────────────────────────
 
-/// Mean-pool the weight rows for the Viterbi token sequence, then optionally L2-normalize.
-/// Uses the same dequantization formula as wordpiece.rs: QUANT_MIN + (p as f32) * QUANT_SCALE.
-fn pool_and_mean(weight_rows: &[&'static lookup::Param]) -> [f32; lookup::DIMENSIONS] {
+/// Mean-pool the Viterbi token sequence into an embedding vector, then optionally L2-normalize.
+///
+/// Each item is `Option<&'static Slot>`:
+///   `Some(slot)` — a real vocab token; dequantize using its per-row params.
+///   `None`       — a fused UNK token; dequantize using the UNK const + UNK_MIN/UNK_SCALE.
+///
+/// In f32 builds the row params are (0.0, 1.0) identity values — same code path, no overhead.
+fn pool_and_mean(slots: &[Option<&'static lookup::Slot>]) -> [f32; lookup::DIMENSIONS] {
     let mut vector = [0.0f32; lookup::DIMENSIONS];
-    let count = weight_rows.len();
+    let count = slots.len();
     if count == 0 {
         // Empty input after normalization — return zero vector.
         return vector;
     }
-    for row in weight_rows {
-        crate::wordpiece::accumulate(&mut vector, row);
+    for slot_opt in slots {
+        match slot_opt {
+            Some(slot) => {
+                // Real vocab token: use per-row params from the slot.
+                // quant builds: slot.row_min / slot.row_scale are the per-row params.
+                // f32 build:    those fields are absent; pass (0.0, 1.0) identity consts.
+                #[cfg(any(feature = "quant-8", feature = "quant-16"))]
+                crate::wordpiece::accumulate(&mut vector, &slot.weight, slot.row_min, slot.row_scale);
+                #[cfg(not(any(feature = "quant-8", feature = "quant-16")))]
+                crate::wordpiece::accumulate(&mut vector, &slot.weight, 0.0, 1.0);
+            }
+            None => {
+                // Fused UNK: use the UNK const with its per-row params.
+                // quant builds: UNK_MIN / UNK_SCALE from model_constants.rs.
+                // f32 build:    UNK_MIN=0.0, UNK_SCALE=1.0 → identity.
+                crate::wordpiece::accumulate(
+                    &mut vector,
+                    &lookup::UNK,
+                    lookup::UNK_MIN,
+                    lookup::UNK_SCALE,
+                );
+            }
+        }
     }
     let scale = 1.0 / count as f32;
     for v in &mut vector {

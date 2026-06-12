@@ -202,6 +202,15 @@ fn main() {
 
     let model_type = tk["model"]["type"].as_str().unwrap_or("WordPiece");
 
+    // quant_max is shared by the packer, oracle, and generate_testdata.
+    let quant_max: f32 = if cfg!(feature = "quant-8") {
+        255.0
+    } else if cfg!(feature = "quant-16") {
+        65535.0
+    } else {
+        1.0 // f32 build: unused (row_quant_params called but oracle_weight returns w)
+    };
+
     if model_type == "Unigram" {
         build_unigram(&out, &tk, &model.name, &weights, dims as usize, normalize_output, skip_unk);
         #[cfg(feature = "tests")]
@@ -212,8 +221,7 @@ fn main() {
                 &weights,
                 dims as usize,
                 &tokenizer_path,
-                0.0,
-                1.0,
+                quant_max,
                 false, // Unigram models never add CLS/SEP
                 normalize_output,
                 skip_unk,
@@ -358,8 +366,9 @@ fn main() {
         }
     }
 
-    // compute global min/max for quantization
-    let (global_min, global_max) = if cfg!(feature = "quant-8") || cfg!(feature = "quant-16") {
+    // global_min / quant_scale: kept for backward compat (emitted as consts for f32 builds;
+    // quant builds still emit them but the runtime reads per-row params from the slot instead).
+    let (global_min, quant_scale) = if cfg!(feature = "quant-8") || cfg!(feature = "quant-16") {
         let mut mn = f32::INFINITY;
         let mut mx = f32::NEG_INFINITY;
         for row in &weights {
@@ -368,28 +377,33 @@ fn main() {
                 mx = mx.max(v);
             }
         }
-        (mn, mx)
+        let scale = if (mx - mn).abs() < f32::EPSILON { 1.0 } else { (mx - mn) / quant_max };
+        (mn, scale)
     } else {
-        (0.0, 1.0) // unused
+        (0.0_f32, 1.0_f32) // f32 build: const pass-through (0.0 / 1.0 → identity)
     };
 
-    let quant_max = if cfg!(feature = "quant-8") {
-        255.0
-    } else if cfg!(feature = "quant-16") {
-        65535.0
+    // reorder weights into PHF slots with verify hash (and per-row params in quant builds).
+    //
+    // quant builds (quant-8 / quant-16):
+    //   slot layout: { verify: u64, row_min: f32, row_scale: f32, weight: [uN; DIMS] }
+    //   SLOT_SIZE   = 8 + 8 + DIMENSIONS * DTYPE_SIZE
+    //
+    // f32 build:
+    //   slot layout: { verify: u64, weight: [f32; DIMS] }
+    //   SLOT_SIZE   = 8 + DIMENSIONS * DTYPE_SIZE  (unchanged)
+    let slot_size = if cfg!(feature = "quant-8") || cfg!(feature = "quant-16") {
+        8 + 8 + dims as usize * dtype_sz() // verify + row_min + row_scale + weights
     } else {
-        1.0
+        8 + dims as usize * dtype_sz() // verify + weights
     };
+    // Padding check: SLOT_SIZE must be a multiple of 8 (align(8) on the Slot struct).
+    // For quant builds: 8 + 8 + DIMS * dtype_sz. DIMS is a multiple of 8 (all supported dims).
+    // quant-8:  16 + DIMS*1 — multiple of 8 when DIMS%8==0 ✓
+    // quant-16: 16 + DIMS*2 — multiple of 8 when DIMS%8==0 ✓
+    // f32:       8 + DIMS*4 — multiple of 8 when DIMS%8==0 ✓
+    assert_eq!(slot_size % 8, 0, "slot_size={slot_size} is not a multiple of 8 for dims={dims}");
 
-    let quant_scale = if (global_max - global_min).abs() < f32::EPSILON {
-        1.0
-    } else {
-        (global_max - global_min) / quant_max
-    };
-
-    // reorder weights into PHF slot with verify hash prepended
-    // && zero-fill empty slots
-    let slot_size = 8 + dims as usize * dtype_sz();
     let mut phf_slots: Vec<u8> = Vec::with_capacity(table_size * slot_size);
     for slot in 0..table_size {
         phf_slots.extend_from_slice(&verify[slot].to_le_bytes());
@@ -398,7 +412,24 @@ fn main() {
         } else {
             &zero_row
         };
-        phf_slots.extend_from_slice(&quantize_f32_to_bytes(row, global_min, quant_scale));
+        // In quant builds, write per-row params before the quantized weights,
+        // then quantize the weights using those per-row params.
+        // In f32 builds, skip per-row params (unchanged layout); write raw f32.
+        if cfg!(feature = "quant-8") || cfg!(feature = "quant-16") {
+            // Empty slots get (0.0, 1.0) — dequantize(0) = 0.0 * 1.0 + 0.0 = 0.0.
+            let (row_min, row_scale) = if occupied[slot] {
+                row_quant_params(row, quant_max)
+            } else {
+                (0.0_f32, 1.0_f32)
+            };
+            phf_slots.extend_from_slice(&row_min.to_le_bytes());
+            phf_slots.extend_from_slice(&row_scale.to_le_bytes());
+            // Quantize weights with per-row params (not global).
+            phf_slots.extend_from_slice(&quantize_f32_to_bytes(row, row_min, row_scale));
+        } else {
+            // f32 build: raw f32 weights, no per-row params.
+            phf_slots.extend_from_slice(&quantize_f32_to_bytes(row, global_min, quant_scale));
+        }
     }
     fs::write(out.join("weights.bin"), &phf_slots).unwrap();
 
@@ -416,11 +447,41 @@ fn main() {
     }
     fs::write(out.join("verify.bin"), &verify_bin).unwrap();
 
-    let unk_str = format_quantized_param(&unk, global_min, quant_scale);
-    let cls_str = format_quantized_param(&cls, global_min, quant_scale);
-    let sep_str = format_quantized_param(&sep, global_min, quant_scale);
+    // Per-row params for the special tokens (UNK/CLS/SEP).
+    // In quant builds, each special token's row has its own (min, scale) pair, just
+    // like slot rows. The runtime reads these consts directly (no slot lookup for specials).
+    // In f32 builds these are (0.0, 1.0) identity consts — the compiler eliminates them.
+    let (unk_min, unk_scale) = if cfg!(feature = "quant-8") || cfg!(feature = "quant-16") {
+        row_quant_params(&unk, quant_max)
+    } else {
+        (0.0_f32, 1.0_f32)
+    };
+    let (cls_min, cls_scale) = if cfg!(feature = "quant-8") || cfg!(feature = "quant-16") {
+        row_quant_params(&cls, quant_max)
+    } else {
+        (0.0_f32, 1.0_f32)
+    };
+    let (sep_min, sep_scale) = if cfg!(feature = "quant-8") || cfg!(feature = "quant-16") {
+        row_quant_params(&sep, quant_max)
+    } else {
+        (0.0_f32, 1.0_f32)
+    };
+
+    // Quantize special-token rows with their own per-row params.
+    let unk_str = format_quantized_param(&unk, unk_min, unk_scale);
+    let cls_str = format_quantized_param(&cls, cls_min, cls_scale);
+    let sep_str = format_quantized_param(&sep, sep_min, sep_scale);
 
     let dtype_sz = dtype_sz();
+
+    // SLOT_SIZE: in quant builds the slot carries two extra f32 fields (row_min, row_scale).
+    // In f32 builds the layout is unchanged (verify:u64 + weight:[f32; DIMS]).
+    // The emitted const must match the Slot struct in src/lookup.rs exactly.
+    let slot_size_const = if cfg!(feature = "quant-8") || cfg!(feature = "quant-16") {
+        "8 + 8 + DIMENSIONS * DTYPE_SIZE".to_string() // verify + row_min + row_scale + weights
+    } else {
+        "8 + DIMENSIONS * DTYPE_SIZE".to_string() // f32 build: unchanged
+    };
 
     // emit constants
     fs::write(
@@ -432,10 +493,19 @@ pub type Param = [{dtype}; DIMENSIONS];\n\
 pub const TABLE_SIZE: usize = {table_size};\n\
 pub const TABLE_MASK: usize = {table_mask};\n\
 pub const NUM_BUCKETS: usize = {num_buckets};\n\
-pub const SLOT_SIZE: usize = 8 + DIMENSIONS * DTYPE_SIZE;\n\
+pub const SLOT_SIZE: usize = {slot_size_const};\n\
 pub const UNK: Param = {unk_str};\n\
 pub const CLS: Param = {cls_str};\n\
 pub const SEP: Param = {sep_str};\n\
+// Per-row quantization params for the special tokens (UNK/CLS/SEP).
+// In quant builds the runtime uses these consts directly when accumulating special tokens.
+// In f32 builds these are (0.0, 1.0) identity values — the compiler elides them.
+#[allow(dead_code)] pub const UNK_MIN: f32 = {unk_min:?};\n\
+#[allow(dead_code)] pub const UNK_SCALE: f32 = {unk_scale:?};\n\
+#[allow(dead_code)] pub const CLS_MIN: f32 = {cls_min:?};\n\
+#[allow(dead_code)] pub const CLS_SCALE: f32 = {cls_scale:?};\n\
+#[allow(dead_code)] pub const SEP_MIN: f32 = {sep_min:?};\n\
+#[allow(dead_code)] pub const SEP_SCALE: f32 = {sep_scale:?};\n\
 pub const MAX_WORD_LEN: usize = {max_word_len};\n\
 pub const CONTINUING_PREFIX: &str = {continuing_prefix:?};\n\
 pub const ADD_SPECIAL_TOKENS: bool = {add_special_tokens};\n\
@@ -445,8 +515,11 @@ pub const NORMALIZE_OUTPUT: bool = {normalize_output};\n\
 // Default (false) pools UNK rows, which is correct for sentence-transformers static models.
 #[allow(dead_code)] pub const SKIP_UNK: bool = {skip_unk};\n\
 pub const DTYPE_SIZE: usize = {dtype_sz};\n\
-pub const QUANT_MIN: f32 = {global_min:?};\n\
-pub const QUANT_SCALE: f32 = {quant_scale:?};\n\
+// QUANT_MIN / QUANT_SCALE: global params retained for the f32 build (0.0 / 1.0 = identity).
+// In quant builds, slot weights are decoded with the per-row params stored in each Slot;
+// these global consts are no longer used for weight decoding in quant builds.
+#[allow(dead_code)] pub const QUANT_MIN: f32 = {global_min:?};\n\
+#[allow(dead_code)] pub const QUANT_SCALE: f32 = {quant_scale:?};\n\
 pub const MODEL_NAME: &str = {model_name:?};\n\
 // Unigram-specific constants. Dead in WordPiece builds; the compiler elides the
 // Unigram code path via the IS_UNIGRAM const branch in encode_single.
@@ -478,8 +551,7 @@ pub const MODEL_NAME: &str = {model_name:?};\n\
         &weights,
         dims as usize,
         &tokenizer_path,
-        global_min,
-        quant_scale,
+        quant_max,
         add_special_tokens,
         normalize_output,
         skip_unk,
@@ -629,34 +701,22 @@ fn build_unigram(
     }
     fs::write(out.join("scores.bin"), &scores_bin).unwrap();
 
-    // ── Emit weights.bin (same layout as WordPiece — no quantization for Unigram) ─
-    // Unigram models from model2vec are always F32; quantization is orthogonal.
-    // For now emit raw f32 (quant-8/16 would apply identically; the scoring
-    // array uses raw f32 scores regardless).
-    let slot_size = 8 + dims * 4; // verify:u64 + row:f32*dims
-    let mut phf_slots: Vec<u8> = Vec::with_capacity(table_size * slot_size);
+    // ── Emit weights.bin (same layout as WordPiece, including per-row params in quant builds) ─
+    // Unigram models from model2vec are always F32, but quant builds apply quantization
+    // orthogonally. The slot layout matches the WordPiece path so src/lookup.rs is shared.
+    //
+    // quant builds: slot = { verify:u64, row_min:f32, row_scale:f32, weight:[uN; DIMS] }
+    // f32 build:    slot = { verify:u64, weight:[f32; DIMS] }
+    let quant_max_uni: f32 = if cfg!(feature = "quant-8") { 255.0 }
+        else if cfg!(feature = "quant-16") { 65535.0 }
+        else { 1.0 };
+    let slot_size_uni = if cfg!(feature = "quant-8") || cfg!(feature = "quant-16") {
+        8 + 8 + dims * dtype_sz() // verify + row_min + row_scale + weights
+    } else {
+        8 + dims * 4 // verify + raw f32 weights
+    };
     let zero_row = vec![0.0f32; dims];
-
-    // compute global min/max for quantization
-    let (global_min, global_max) = if cfg!(feature = "quant-8") || cfg!(feature = "quant-16") {
-        let mut mn = f32::INFINITY;
-        let mut mx = f32::NEG_INFINITY;
-        for row in weights {
-            for &v in row {
-                mn = mn.min(v);
-                mx = mx.max(v);
-            }
-        }
-        (mn, mx)
-    } else {
-        (0.0f32, 1.0f32)
-    };
-    let quant_max = if cfg!(feature = "quant-8") { 255.0 } else if cfg!(feature = "quant-16") { 65535.0 } else { 1.0 };
-    let quant_scale = if (global_max - global_min).abs() < f32::EPSILON {
-        1.0f32
-    } else {
-        (global_max - global_min) / quant_max
-    };
+    let mut phf_slots: Vec<u8> = Vec::with_capacity(table_size * slot_size_uni);
 
     for slot in 0..table_size {
         phf_slots.extend_from_slice(&verify[slot].to_le_bytes());
@@ -665,7 +725,18 @@ fn build_unigram(
         } else {
             &zero_row
         };
-        phf_slots.extend_from_slice(&quantize_f32_to_bytes(row, global_min, quant_scale));
+        if cfg!(feature = "quant-8") || cfg!(feature = "quant-16") {
+            let (row_min, row_scale) = if occupied[slot] {
+                row_quant_params(row, quant_max_uni)
+            } else {
+                (0.0_f32, 1.0_f32)
+            };
+            phf_slots.extend_from_slice(&row_min.to_le_bytes());
+            phf_slots.extend_from_slice(&row_scale.to_le_bytes());
+            phf_slots.extend_from_slice(&quantize_f32_to_bytes(row, row_min, row_scale));
+        } else {
+            phf_slots.extend_from_slice(&quantize_f32_to_bytes(row, 0.0, 1.0));
+        }
     }
     fs::write(out.join("weights.bin"), &phf_slots).unwrap();
 
@@ -693,12 +764,43 @@ fn build_unigram(
     // Guard: Unigram models must not add special tokens (the unk row is the only special)
     assert!(!add_special_tokens, "Unigram model '{}' unexpectedly derived add_special_tokens=true; this should not happen for $A-only TemplateProcessing", model_name);
 
-    // Emit the UNK embedding as the constant (used for UNK pooling)
+    // Emit the UNK embedding as the constant (used for UNK pooling).
     let unk_row = if unk_id < weights.len() { &weights[unk_id] } else { &zero_row };
     let dtype = dtype();
     let dtype_sz = dtype_sz();
-    let unk_str = format_quantized_param(unk_row, global_min, quant_scale);
-    let zero_str = format_quantized_param(&zero_row, global_min, quant_scale);
+
+    // Per-row params for UNK (CLS/SEP are zero for Unigram models — (0.0, 1.0) identity).
+    let (unk_min_uni, unk_scale_uni) = if cfg!(feature = "quant-8") || cfg!(feature = "quant-16") {
+        row_quant_params(unk_row, quant_max_uni)
+    } else {
+        (0.0_f32, 1.0_f32)
+    };
+    let unk_str = format_quantized_param(unk_row, unk_min_uni, unk_scale_uni);
+    let zero_str = format_quantized_param(&zero_row, 0.0, 1.0);
+
+    // SLOT_SIZE must match the Slot struct in src/lookup.rs.
+    let slot_size_const_uni = if cfg!(feature = "quant-8") || cfg!(feature = "quant-16") {
+        "8 + 8 + DIMENSIONS * DTYPE_SIZE".to_string()
+    } else {
+        "8 + DIMENSIONS * DTYPE_SIZE".to_string()
+    };
+
+    // Global params for the emitted QUANT_MIN/QUANT_SCALE consts (retained for compat;
+    // quant builds no longer use them for weight decoding).
+    let (global_min_uni, quant_scale_uni) = if cfg!(feature = "quant-8") || cfg!(feature = "quant-16") {
+        let mut mn = f32::INFINITY;
+        let mut mx = f32::NEG_INFINITY;
+        for row in weights {
+            for &v in row {
+                mn = mn.min(v);
+                mx = mx.max(v);
+            }
+        }
+        let s = if (mx - mn).abs() < f32::EPSILON { 1.0f32 } else { (mx - mn) / quant_max_uni };
+        (mn, s)
+    } else {
+        (0.0_f32, 1.0_f32)
+    };
 
     // Format pad_chars as a Rust char literal array
     let pad_chars_str = pad_chars.iter()
@@ -717,10 +819,17 @@ pub type Param = [{dtype}; DIMENSIONS];\n\
 pub const TABLE_SIZE: usize = {table_size};\n\
 pub const TABLE_MASK: usize = {table_mask_val};\n\
 pub const NUM_BUCKETS: usize = {num_buckets};\n\
-pub const SLOT_SIZE: usize = 8 + DIMENSIONS * DTYPE_SIZE;\n\
+pub const SLOT_SIZE: usize = {slot_size_const_uni};\n\
 pub const UNK: Param = {unk_str};\n\
 pub const CLS: Param = {zero_str};\n\
 pub const SEP: Param = {zero_str};\n\
+// Per-row quantization params for special tokens. CLS/SEP are zero for Unigram models.\n\
+#[allow(dead_code)] pub const UNK_MIN: f32 = {unk_min_uni:?};\n\
+#[allow(dead_code)] pub const UNK_SCALE: f32 = {unk_scale_uni:?};\n\
+#[allow(dead_code)] pub const CLS_MIN: f32 = 0.0;\n\
+#[allow(dead_code)] pub const CLS_SCALE: f32 = 1.0;\n\
+#[allow(dead_code)] pub const SEP_MIN: f32 = 0.0;\n\
+#[allow(dead_code)] pub const SEP_SCALE: f32 = 1.0;\n\
 pub const MAX_WORD_LEN: usize = 0;\n\
 pub const CONTINUING_PREFIX: &str = \"##\";\n\
 pub const ADD_SPECIAL_TOKENS: bool = false;\n\
@@ -730,8 +839,8 @@ pub const NORMALIZE_OUTPUT: bool = {normalize_output};\n\
 // Default (false) pools UNK rows, which is correct for sentence-transformers static models.
 #[allow(dead_code)] pub const SKIP_UNK: bool = {skip_unk};\n\
 pub const DTYPE_SIZE: usize = {dtype_sz};\n\
-pub const QUANT_MIN: f32 = {global_min:?};\n\
-pub const QUANT_SCALE: f32 = {quant_scale:?};\n\
+#[allow(dead_code)] pub const QUANT_MIN: f32 = {global_min_uni:?};\n\
+#[allow(dead_code)] pub const QUANT_SCALE: f32 = {quant_scale_uni:?};\n\
 pub const MODEL_NAME: &str = {model_name:?};\n\
 // Unigram-specific constants. Some may be dead in certain feature combinations.\n\
 #[allow(dead_code)] pub const IS_UNIGRAM: bool = true;\n\
@@ -1295,6 +1404,20 @@ fn bf16_to_f32(b: u16) -> f32 {
     f32::from_bits((b as u32) << 16)
 }
 
+/// Compute per-row quantization params: (row_min, row_scale).
+/// Shared by the packer (weights.bin layout) and the oracle (generate_testdata),
+/// so they cannot drift. quant_max is 255.0 for u8 or 65535.0 for u16.
+fn row_quant_params(row: &[f32], quant_max: f32) -> (f32, f32) {
+    let mut mn = f32::INFINITY;
+    let mut mx = f32::NEG_INFINITY;
+    for &v in row {
+        mn = mn.min(v);
+        mx = mx.max(v);
+    }
+    let scale = if (mx - mn).abs() < f32::EPSILON { 1.0_f32 } else { (mx - mn) / quant_max };
+    (mn, scale)
+}
+
 /// Quantize one f32 value to u8. `as u8` saturates (Rust 1.45+), so no clamp needed.
 fn quantize_u8(v: f32, min: f32, scale: f32) -> u8 {
     ((v - min) / scale).round() as u8
@@ -1429,12 +1552,15 @@ fn shared_model_dir(out: &Path, cache_key: &str) -> PathBuf {
     dir
 }
 
+/// Dequantize a single weight value using the row's own (min, scale) params.
+/// Shared by generate_testdata so the oracle mirrors exactly what the packer wrote.
+/// In f32 builds, row_min=0.0 and row_scale=1.0 → returns w unchanged.
 #[cfg(feature = "tests")]
-fn oracle_weight(w: f32, global_min: f32, quant_scale: f32) -> f32 {
+fn oracle_weight(w: f32, row_min: f32, row_scale: f32) -> f32 {
     if cfg!(feature = "quant-8") {
-        global_min + quantize_u8(w, global_min, quant_scale) as f32 * quant_scale
+        row_min + quantize_u8(w, row_min, row_scale) as f32 * row_scale
     } else if cfg!(feature = "quant-16") {
-        global_min + quantize_u16(w, global_min, quant_scale) as f32 * quant_scale
+        row_min + quantize_u16(w, row_min, row_scale) as f32 * row_scale
     } else {
         w
     }
@@ -1450,14 +1576,14 @@ fn normalize_vec(vector: &mut [f32]) {
     }
 }
 
+// quant_max for generate_testdata: 255.0 (u8), 65535.0 (u16), 1.0 (f32 unused).
 #[cfg(feature = "tests")]
 fn generate_testdata(
     out: &Path,
     weights: &[Vec<f32>],
     _dims: usize,
     tokenizer_path: &Path,
-    global_min: f32,
-    quant_scale: f32,
+    quant_max: f32,
     add_special_tokens: bool,
     normalize_output: bool,
     skip_unk: bool,
@@ -1478,10 +1604,22 @@ fn generate_testdata(
         "multiple   spaces   between",
         "a]b[c{d}e",
         "\x00\x01\x02\x03",
+        // B1 probe: "theȝ" (U+021D yogh) — 'the' (id=1996) matches as a first piece,
+        // but '##ȝ' has no vocabulary entry, so HF WordPiece emits exactly one [UNK]
+        // (id=100) for the whole word (oracle: [CLS,UNK,SEP]). The old ese default
+        // path (SKIP_UNK=false, no scratch buffer) accumulated 'the' + [UNK] — two
+        // contributions instead of one — diverging from the reference. The unified
+        // scratch-buffer path (plan 009 item B) discards partial pieces on mid-word
+        // failure, emitting one UNK to match HF WordPiece whole-word-UNK semantics.
+        "the\u{021D}",
     ];
 
     let mut code = String::from("const TEST_INPUTS: &[&str] = &[\n");
     let mut outputs: Vec<Vec<f32>> = Vec::new();
+    // f32_outputs: raw f32 oracle (no quantize→dequantize); used by test_quantization_quality
+    // in quant builds to measure quality vs the ideal f32 reference. In f32 builds this is
+    // identical to TEST_OUTPUTS.
+    let mut f32_outputs: Vec<Vec<f32>> = Vec::new();
 
     for &input in &inputs {
         code.push_str(&format!("    {:?},\n", input));
@@ -1493,23 +1631,39 @@ fn generate_testdata(
         } else {
             tokens.get_ids().to_vec()
         };
+
+        // Quantized oracle: quantize→dequantize each weight with PER-ROW params.
+        // row_quant_params is the same function used by the packer — they cannot drift.
+        // Used by test_embeddings_match to check parity between packer and runtime.
         let mut vector = vec![0.0f32; _dims];
+        // f32 oracle: raw weights, no quantization noise. Used by test_quantization_quality.
+        let mut f32_vector = vec![0.0f32; _dims];
         for &tok_id in &token_ids {
-            for (v, &w) in vector
-                .iter_mut()
-                .zip(unsafe { weights.get_unchecked(tok_id as usize) }.iter())
-            {
-                *v += oracle_weight(w, global_min, quant_scale);
+            let row = unsafe { weights.get_unchecked(tok_id as usize) };
+            // Compute per-row params using the shared function (same as packer).
+            // In f32 builds: quant_max=1.0, row_quant_params returns (mn, range) but
+            // oracle_weight returns w unchanged (f32 branch), so row params are harmless.
+            let (row_min, row_scale) = row_quant_params(row, quant_max);
+            for (v, &w) in vector.iter_mut().zip(row.iter()) {
+                *v += oracle_weight(w, row_min, row_scale);
+            }
+            for (v, &w) in f32_vector.iter_mut().zip(row.iter()) {
+                *v += w;
             }
         }
         let scale = if token_ids.is_empty() { 1.0 } else { 1.0 / token_ids.len() as f32 };
         for v in vector.iter_mut() {
             *v *= scale;
         }
+        for v in f32_vector.iter_mut() {
+            *v *= scale;
+        }
         if normalize_output {
             normalize_vec(&mut vector);
+            normalize_vec(&mut f32_vector);
         }
         outputs.push(vector);
+        f32_outputs.push(f32_vector);
     }
 
     code.push_str("];\n\n");
@@ -1519,6 +1673,21 @@ fn generate_testdata(
         outputs.len()
     ));
     for vec in &outputs {
+        code.push_str(&format!("    {:?},\n", vec.as_slice()));
+    }
+    code.push_str("];\n\n");
+
+    // TEST_OUTPUTS_F32: ideal f32 reference (no quantization noise).
+    // Only meaningful in quant builds; in f32 builds it equals TEST_OUTPUTS.
+    // Used by test_quantization_quality to assert cosine vs f32 reference.
+    // The #[allow(dead_code)] suppresses the warning in f32 builds where the
+    // quality test is not compiled.
+    code.push_str(&format!(
+        "#[allow(dead_code)] const TEST_OUTPUTS_F32: &[[f32; {}]; {}] = &[\n",
+        _dims,
+        f32_outputs.len()
+    ));
+    for vec in &f32_outputs {
         code.push_str(&format!("    {:?},\n", vec.as_slice()));
     }
     code.push_str("];\n");
