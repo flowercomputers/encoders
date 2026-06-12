@@ -95,6 +95,15 @@ mod optional {
                 sim > threshold,
                 "cosine similarity for {i} below threshold: {sim}"
             );
+            #[cfg(not(any(feature = "quant-8", feature = "quant-16")))]
+            {
+                let rel = |w: &[f32], g: &[f32]| -> f32 {
+                    let d: f32 = w.iter().zip(g).map(|(a, b)| (a - b) * (a - b)).sum::<f32>().sqrt();
+                    let n: f32 = w.iter().map(|a| a * a).sum::<f32>().sqrt();
+                    d / n.max(f32::EPSILON)
+                };
+                assert!(rel(want, got) < 1e-4, "relative L2 error for {i} too high");
+            }
         }
     }
 }
