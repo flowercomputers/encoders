@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  test:
+    name: test (${{ matrix.os }}, features=${{ matrix.features || 'default' }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        features:
+          - ""
+          - "tests"
+          - "tests,quant-8"
+          - "tests,rayon,dim-256"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set model cache dir
+        run: echo "ESE_CACHE_DIR=$HOME/.cache/ese" >> "$GITHUB_ENV"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Cache model files
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ese
+          key: hf-model-${{ hashFiles('build.rs') }}
+
+      - name: Run tests (default features)
+        if: matrix.features == ''
+        run: cargo test
+
+      - name: Run tests (with features)
+        if: matrix.features != ''
+        run: cargo test --features ${{ matrix.features }}
+
+  workspace-check:
+    name: workspace check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set model cache dir
+        run: echo "ESE_CACHE_DIR=$HOME/.cache/ese" >> "$GITHUB_ENV"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Cache model files
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ese
+          key: hf-model-${{ hashFiles('build.rs') }}
+      - run: cargo check --workspace
