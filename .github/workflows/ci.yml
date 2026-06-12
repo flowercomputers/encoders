@@ -43,6 +43,33 @@ jobs:
         if: matrix.features != ''
         run: cargo test --features ${{ matrix.features }}
 
+  nife-acceptance:
+    name: NIFE acceptance (stephantulkens/NIFE-mxbai-embed-large-v1)
+    runs-on: ubuntu-latest
+    env:
+      ESE_MODEL: "stephantulkens/NIFE-mxbai-embed-large-v1@970a0151f3faeddbab5c68be38d52bbc5ea719ab"
+      ESE_MODEL_SHA256: "fd3b36cb5e4ffeb92ade9fc370151c45418ae78592476a936d513ccb0ff61d06"
+      ESE_TOKENIZER_SHA256: "05f709262ae338d32529b88fe4acb0a1ba119ca1e84a85df772acfb8e8bc1361"
+      ESE_NORMALIZE_OUTPUT: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set model cache dir
+        run: echo "ESE_CACHE_DIR=$HOME/.cache/ese" >> "$GITHUB_ENV"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Cache NIFE model files
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ese
+          key: hf-model-nife-970a015
+
+      - name: Run NIFE acceptance tests
+        run: cargo test --features tests,dim-1024
+
   workspace-check:
     name: workspace check
     runs-on: ubuntu-latest
