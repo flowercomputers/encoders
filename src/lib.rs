@@ -1,5 +1,7 @@
 mod lookup;
 mod pretokenizer;
+#[allow(dead_code, unused_imports)]
+mod unigram;
 mod wordpiece;
 
 /// DIMENSIONS is the number of dimensions per encoding.
@@ -83,23 +85,29 @@ pub fn encode(
 
 /// Encodes a single text into an embedding vector.
 ///
-/// The default model is uncased; input is lowercased before tokenization.
-/// Case-insensitivity is a property of the compiled normalizer, not the API.
+/// For uncased models (the default WordPiece model), input is lowercased before
+/// tokenization. For Unigram/SentencePiece models, case handling depends on the
+/// normalizer compiled into the build.
 /// Output is L2-normalized when the crate is built with `ESE_NORMALIZE_OUTPUT=1`.
 ///
 /// # Examples
 ///
 /// ```
-/// let a = ese::encode_single("rustacean");
-/// let b = ese::encode_single("Rustacean");
-/// assert_eq!(a, b, "encoding is case-insensitive for the default (uncased) model");
-///
 /// let v = ese::encode_single("hello world");
 /// assert_eq!(v.len(), ese::DIMENSIONS);
 /// ```
 #[inline]
 pub fn encode_single(input: impl AsRef<str>) -> [f32; DIMENSIONS] {
     let text = input.as_ref();
+
+    // Const dispatch: the compiler eliminates the dead arm at compile time.
+    // IS_UNIGRAM=true → Unigram/Viterbi path (src/unigram.rs).
+    // IS_UNIGRAM=false → WordPiece path (unchanged from before).
+    if lookup::IS_UNIGRAM {
+        return unigram::encode_single(text);
+    }
+
+    // ── WordPiece path (byte-for-byte identical to the original) ─────────────
     let mut vector = [0.0f32; DIMENSIONS];
     if lookup::ADD_SPECIAL_TOKENS {
         wordpiece::accumulate(&mut vector, &lookup::CLS);

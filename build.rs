@@ -1,3 +1,4 @@
+use base64::Engine as _;
 use sha2::{Digest, Sha256};
 use std::{
     collections::HashSet,
@@ -190,6 +191,28 @@ fn main() {
     // ── Guard: tokenizer family and normalizer ────────────────────────────────
     guard_tokenizer_family(&tk, &model.name);
 
+    // NORMALIZE_OUTPUT: env var ESE_NORMALIZE_OUTPUT=1
+    let normalize_output = env::var("ESE_NORMALIZE_OUTPUT").map(|v| v == "1").unwrap_or(false);
+
+    let model_type = tk["model"]["type"].as_str().unwrap_or("WordPiece");
+
+    if model_type == "Unigram" {
+        build_unigram(&out, &tk, &model.name, &weights, dims as usize, normalize_output);
+        #[cfg(feature = "tests")]
+        generate_testdata(
+            &out,
+            &weights,
+            dims as usize,
+            &tokenizer_path,
+            0.0,
+            1.0,
+            false, // Unigram models never add CLS/SEP
+            normalize_output,
+        );
+        return;
+    }
+
+    // ── WordPiece path ────────────────────────────────────────────────────────
     let vocab = tk["model"]["vocab"]
         .as_object()
         .expect("missing model.vocab");
@@ -238,9 +261,6 @@ fn main() {
     let max_word_len = tk["model"]["max_input_chars_per_word"]
         .as_u64()
         .unwrap_or(100) as usize;
-
-    // NORMALIZE_OUTPUT: env var ESE_NORMALIZE_OUTPUT=1
-    let normalize_output = env::var("ESE_NORMALIZE_OUTPUT").map(|v| v == "1").unwrap_or(false);
 
     let zero_row = vec![0.0f32; dims as usize];
     let mut unk: Vec<f32> = zero_row.clone();
@@ -413,11 +433,28 @@ pub const DTYPE_SIZE: usize = {dtype_sz};\n\
 pub const QUANT_MIN: f32 = {global_min:?};\n\
 pub const QUANT_SCALE: f32 = {quant_scale:?};\n\
 pub const MODEL_NAME: &str = {model_name:?};\n\
+// Unigram-specific constants. Dead in WordPiece builds; the compiler elides the
+// Unigram code path via the IS_UNIGRAM const branch in encode_single.
+#[allow(dead_code)] pub const IS_UNIGRAM: bool = false;\n\
+#[allow(dead_code)] pub const MAX_TOKEN_CHARS: usize = 0;\n\
+#[allow(dead_code)] pub const UNK_ID: usize = {unk_id};\n\
+#[allow(dead_code)] pub const PAD_CHARS: &[char] = &[];\n\
+#[allow(dead_code)] pub const COLLAPSE_SPACES: bool = false;\n\
+#[allow(dead_code)] pub const COLLAPSE_WHITESPACE: bool = false;\n\
+#[allow(dead_code)] pub const STRIP_LEFT: bool = false;\n\
+#[allow(dead_code)] pub const STRIP_RIGHT: bool = false;\n\
+#[allow(dead_code)] pub const METASPACE_CHAR: char = '\\u{{2581}}';\n\
+#[allow(dead_code)] pub const METASPACE_PREPEND: bool = false;\n\
 ",
             model_name = model.name,
         ),
     )
     .unwrap();
+
+    // Emit dummy scores.bin and charsmap.bin for WordPiece builds (IS_UNIGRAM=false,
+    // so these are never referenced at runtime; they exist so include_bytes! compiles).
+    fs::write(out.join("scores.bin"), &[0u8; 4]).unwrap();
+    fs::write(out.join("charsmap.bin"), &[0u8; 0]).unwrap();
 
     #[cfg(feature = "tests")]
     generate_testdata(
@@ -432,39 +469,487 @@ pub const MODEL_NAME: &str = {model_name:?};\n\
     );
 }
 
+// ── Unigram build path ────────────────────────────────────────────────────────
+
+/// Build all artifacts for an Unigram model: PHF table (same layout as WordPiece),
+/// scores.bin (parallel f32 array indexed by PHF slot), charsmap.bin (decoded
+/// Precompiled normalizer bytes), and model_constants.rs with Unigram-specific consts.
+fn build_unigram(
+    out: &Path,
+    tk: &serde_json::Value,
+    model_name: &str,
+    weights: &[Vec<f32>],
+    dims: usize,
+    normalize_output: bool,
+) {
+    // ── Parse vocab: array of [token, score] pairs ────────────────────────────
+    let vocab_arr = tk["model"]["vocab"]
+        .as_array()
+        .expect("Unigram model.vocab must be an array of [token, score] pairs");
+
+    // id = index in array
+    let unk_id = tk["model"]["unk_id"].as_u64().unwrap_or(0) as usize;
+
+    // Collect (token, id=index) pairs — mirrors WordPiece entries
+    let mut entries: Vec<(String, usize)> = Vec::with_capacity(vocab_arr.len());
+    // Scores parallel to vocab index (id → score as f32)
+    let mut vocab_scores: Vec<f32> = Vec::with_capacity(vocab_arr.len());
+
+    // Find max token char length for MAX_TOKEN_CHARS
+    let mut max_token_chars: usize = 0;
+    // Collect pad chars for PAD_CHARS
+    let mut pad_chars: Vec<char> = Vec::new();
+    // Normalizer op flags
+    let mut collapse_spaces = false;
+    let mut collapse_whitespace = false;
+    let mut strip_left = false;
+    let mut strip_right = false;
+    // Charsmap base64
+    let mut charsmap_b64: Option<String> = None;
+
+    for (id, entry) in vocab_arr.iter().enumerate() {
+        let token = entry[0].as_str().unwrap_or("").to_string();
+        let score = entry[1].as_f64().unwrap_or(0.0) as f32;
+        let char_len = token.chars().count();
+        if char_len > max_token_chars {
+            max_token_chars = char_len;
+        }
+        entries.push((token, id));
+        vocab_scores.push(score);
+    }
+
+    // ── Collect normalizer-op constants by walking the chain ──────────────────
+    collect_unigram_norm_ops(
+        &tk["normalizer"],
+        &mut charsmap_b64,
+        &mut pad_chars,
+        &mut collapse_spaces,
+        &mut collapse_whitespace,
+        &mut strip_left,
+        &mut strip_right,
+    );
+
+    // ── Decode and write charsmap.bin ─────────────────────────────────────────
+    let charsmap_bytes = if let Some(b64) = &charsmap_b64 {
+        base64::engine::general_purpose::STANDARD.decode(b64)
+            .unwrap_or_else(|e| panic!(
+                "model '{}' Precompiled charsmap base64 decode failed: {}",
+                model_name, e
+            ))
+    } else {
+        vec![]
+    };
+    fs::write(out.join("charsmap.bin"), &charsmap_bytes).unwrap();
+
+    // ── PHF construction (same algorithm as WordPiece) ────────────────────────
+    let vocab_size = entries.len();
+    let table_size = vocab_size.next_power_of_two();
+    let table_mask = table_size - 1;
+    let num_buckets = vocab_size;
+
+    let mut buckets: Vec<Vec<usize>> = vec![vec![]; num_buckets];
+    for (i, (token, _)) in entries.iter().enumerate() {
+        let b = (phf_hash(token.as_bytes(), 0) as usize) % num_buckets;
+        buckets[b].push(i);
+    }
+
+    let mut bucket_order: Vec<usize> = (0..num_buckets).collect();
+    bucket_order.sort_by(|a, b| buckets[*b].len().cmp(&buckets[*a].len()));
+
+    let mut seeds: Vec<u32> = vec![0; num_buckets];
+    let mut verify: Vec<u64> = vec![0; table_size];
+    let mut slot_to_weight: Vec<usize> = vec![0; table_size];
+    let mut occupied: Vec<bool> = vec![false; table_size];
+
+    for &bi in &bucket_order {
+        if buckets[bi].is_empty() {
+            continue;
+        }
+        let mut i: u32 = 0;
+        'search: loop {
+            let seed = i | 1;
+            i += 1;
+            assert!(i < 1_000_000, "PHF construction stuck on bucket {bi}");
+
+            let mut trial_slots: Vec<usize> = Vec::with_capacity(buckets[bi].len());
+            let mut seen = HashSet::with_capacity(buckets[bi].len());
+
+            for &entry_idx in &buckets[bi] {
+                let slot = (phf_hash(entries[entry_idx].0.as_bytes(), seed as u64) as usize) & table_mask;
+                if occupied[slot] || !seen.insert(slot) {
+                    continue 'search;
+                }
+                trial_slots.push(slot);
+            }
+
+            seeds[bi] = seed;
+            for (j, &entry_idx) in buckets[bi].iter().enumerate() {
+                let slot = trial_slots[j];
+                occupied[slot] = true;
+                verify[slot] = phf_hash(entries[entry_idx].0.as_bytes(), u64::MAX);
+                slot_to_weight[slot] = entries[entry_idx].1;
+            }
+            break;
+        }
+    }
+
+    // ── Emit scores.bin: f32 array parallel to PHF slots ─────────────────────
+    // slot → vocab-id → score. Empty slots get 0.0 (never read at runtime).
+    let mut scores_bin: Vec<u8> = Vec::with_capacity(table_size * 4);
+    for slot in 0..table_size {
+        let score = if occupied[slot] {
+            vocab_scores[slot_to_weight[slot]]
+        } else {
+            0.0f32
+        };
+        scores_bin.extend_from_slice(&score.to_le_bytes());
+    }
+    fs::write(out.join("scores.bin"), &scores_bin).unwrap();
+
+    // ── Emit weights.bin (same layout as WordPiece — no quantization for Unigram) ─
+    // Unigram models from model2vec are always F32; quantization is orthogonal.
+    // For now emit raw f32 (quant-8/16 would apply identically; the scoring
+    // array uses raw f32 scores regardless).
+    let slot_size = 8 + dims * 4; // verify:u64 + row:f32*dims
+    let mut phf_slots: Vec<u8> = Vec::with_capacity(table_size * slot_size);
+    let zero_row = vec![0.0f32; dims];
+
+    // compute global min/max for quantization
+    let (global_min, global_max) = if cfg!(feature = "quant-8") || cfg!(feature = "quant-16") {
+        let mut mn = f32::INFINITY;
+        let mut mx = f32::NEG_INFINITY;
+        for row in weights {
+            for &v in row {
+                mn = mn.min(v);
+                mx = mx.max(v);
+            }
+        }
+        (mn, mx)
+    } else {
+        (0.0f32, 1.0f32)
+    };
+    let quant_max = if cfg!(feature = "quant-8") { 255.0 } else if cfg!(feature = "quant-16") { 65535.0 } else { 1.0 };
+    let quant_scale = if (global_max - global_min).abs() < f32::EPSILON {
+        1.0f32
+    } else {
+        (global_max - global_min) / quant_max
+    };
+
+    for slot in 0..table_size {
+        phf_slots.extend_from_slice(&verify[slot].to_le_bytes());
+        let row = if occupied[slot] {
+            &weights[slot_to_weight[slot]]
+        } else {
+            &zero_row
+        };
+        phf_slots.extend_from_slice(&quantize_f32_to_bytes(row, global_min, quant_scale));
+    }
+    fs::write(out.join("weights.bin"), &phf_slots).unwrap();
+
+    // seeds.bin and verify.bin
+    let mut seeds_bin: Vec<u8> = Vec::with_capacity(num_buckets * 4);
+    for &s in &seeds {
+        seeds_bin.extend_from_slice(&s.to_le_bytes());
+    }
+    fs::write(out.join("seeds.bin"), &seeds_bin).unwrap();
+
+    let mut verify_bin: Vec<u8> = Vec::with_capacity(table_size * 8);
+    for &v in &verify {
+        verify_bin.extend_from_slice(&v.to_le_bytes());
+    }
+    fs::write(out.join("verify.bin"), &verify_bin).unwrap();
+
+    // ── Derive ADD_SPECIAL_TOKENS (always false for Unigram models here) ──────
+    // The post_processor is TemplateProcessing with $A only — derive_add_special_tokens
+    // will return false because no SpecialToken{id:[CLS]/[SEP]} appears in the template.
+    // Re-use existing function for correctness.
+    // Note: derive_add_special_tokens reads tk["model"]["vocab"] as object — for Unigram
+    // we skip that cross-check path by providing an empty template (the function will
+    // return false because there are no [CLS]/[SEP] SpecialTokens in $A-only template).
+    let add_special_tokens = derive_add_special_tokens(tk, model_name);
+    // Guard: Unigram models must not add special tokens (the unk row is the only special)
+    assert!(!add_special_tokens, "Unigram model '{}' unexpectedly derived add_special_tokens=true; this should not happen for $A-only TemplateProcessing", model_name);
+
+    // Emit the UNK embedding as the constant (used for UNK pooling)
+    let unk_row = if unk_id < weights.len() { &weights[unk_id] } else { &zero_row };
+    let dtype = dtype();
+    let dtype_sz = dtype_sz();
+    let unk_str = format_quantized_param(unk_row, global_min, quant_scale);
+    let zero_str = format_quantized_param(&zero_row, global_min, quant_scale);
+
+    // Format pad_chars as a Rust char literal array
+    let pad_chars_str = pad_chars.iter()
+        .map(|c| format!("'\\u{{{:04X}}}'", *c as u32))
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    let table_mask_val = table_mask;
+
+    fs::write(
+        out.join("model_constants.rs"),
+        format!(
+            "\
+pub const DIMENSIONS: usize = {dims};\n\
+pub type Param = [{dtype}; DIMENSIONS];\n\
+pub const TABLE_SIZE: usize = {table_size};\n\
+pub const TABLE_MASK: usize = {table_mask_val};\n\
+pub const NUM_BUCKETS: usize = {num_buckets};\n\
+pub const SLOT_SIZE: usize = 8 + DIMENSIONS * DTYPE_SIZE;\n\
+pub const UNK: Param = {unk_str};\n\
+pub const CLS: Param = {zero_str};\n\
+pub const SEP: Param = {zero_str};\n\
+pub const MAX_WORD_LEN: usize = 0;\n\
+pub const CONTINUING_PREFIX: &str = \"##\";\n\
+pub const ADD_SPECIAL_TOKENS: bool = false;\n\
+pub const NORMALIZE_OUTPUT: bool = {normalize_output};\n\
+pub const DTYPE_SIZE: usize = {dtype_sz};\n\
+pub const QUANT_MIN: f32 = {global_min:?};\n\
+pub const QUANT_SCALE: f32 = {quant_scale:?};\n\
+pub const MODEL_NAME: &str = {model_name:?};\n\
+// Unigram-specific constants. Some may be dead in certain feature combinations.\n\
+#[allow(dead_code)] pub const IS_UNIGRAM: bool = true;\n\
+#[allow(dead_code)] pub const MAX_TOKEN_CHARS: usize = {max_token_chars};\n\
+#[allow(dead_code)] pub const UNK_ID: usize = {unk_id};\n\
+#[allow(dead_code)] pub const PAD_CHARS: &[char] = &[{pad_chars_str}];\n\
+#[allow(dead_code)] pub const COLLAPSE_SPACES: bool = {collapse_spaces};\n\
+#[allow(dead_code)] pub const COLLAPSE_WHITESPACE: bool = {collapse_whitespace};\n\
+#[allow(dead_code)] pub const STRIP_LEFT: bool = {strip_left};\n\
+#[allow(dead_code)] pub const STRIP_RIGHT: bool = {strip_right};\n\
+#[allow(dead_code)] pub const METASPACE_CHAR: char = '\\u{{2581}}';\n\
+#[allow(dead_code)] pub const METASPACE_PREPEND: bool = true;\n\
+",
+        ),
+    )
+    .unwrap();
+}
+
+/// Walk the normalizer chain recursively to extract Unigram-specific op constants.
+fn collect_unigram_norm_ops(
+    norm: &serde_json::Value,
+    charsmap_b64: &mut Option<String>,
+    pad_chars: &mut Vec<char>,
+    collapse_spaces: &mut bool,
+    collapse_whitespace: &mut bool,
+    strip_left: &mut bool,
+    strip_right: &mut bool,
+) {
+    match norm["type"].as_str() {
+        Some("Sequence") => {
+            if let Some(items) = norm["normalizers"].as_array() {
+                for item in items {
+                    collect_unigram_norm_ops(
+                        item, charsmap_b64, pad_chars,
+                        collapse_spaces, collapse_whitespace,
+                        strip_left, strip_right,
+                    );
+                }
+            }
+        }
+        Some("Precompiled") => {
+            if let Some(b64) = norm["precompiled_charsmap"].as_str() {
+                *charsmap_b64 = Some(b64.to_string());
+            }
+        }
+        Some("Replace") => {
+            if let Some(pattern) = norm["pattern"].get("Regex").and_then(|p| p.as_str()) {
+                if pattern == " {2,}" {
+                    *collapse_spaces = true;
+                } else if pattern == "\\s+" {
+                    *collapse_whitespace = true;
+                }
+            } else if let Some(pattern) = norm["pattern"].get("String").and_then(|p| p.as_str()) {
+                // Single-char pad replacement
+                if let Some(c) = pattern.chars().next() {
+                    pad_chars.push(c);
+                }
+            }
+        }
+        Some("Strip") => {
+            *strip_left = norm["strip_left"].as_bool().unwrap_or(false);
+            *strip_right = norm["strip_right"].as_bool().unwrap_or(false);
+        }
+        _ => {}
+    }
+}
+
 // ── Tokenizer family guard ────────────────────────────────────────────────────
 
 /// Accept tokenizer configs whose normalization and vocab type the compiled
-/// runtime (src/pretokenizer.rs) can handle faithfully. Anything else panics
-/// at build time with a clear message.
+/// runtime can handle faithfully. Anything else panics at build time with a
+/// clear message.
 ///
-/// Accepted normalizer shapes mirror what src/pretokenizer.rs implements:
-///   - BertNormalizer{lowercase:true} (or absent lowercase, which defaults to true)
-///   - Sequence (recurse into each element)
-///   - Lowercase, NFD, StripAccents (each is a subset of what pretokenizer.rs does)
-///   - absent (null): accepted with a warning — the runtime always applies
-///     BERT-uncased normalization (lowercase + NFD + strip combining marks)
-///     regardless, so a null normalizer field is only safe for already-lowercase
-///     inputs. This is intentionally not rejected here (user responsibility).
+/// Accepted model types:
+///   - WordPiece: normalizer must match src/pretokenizer.rs shapes.
+///   - Unigram: normalizer must be a Sequence of exactly the compiled ops
+///     (Precompiled, space-collapse Regex Replace, single-char pad String
+///     Replaces, whitespace-collapse Regex Replace, Strip). Pre-tokenizer
+///     must be Metaspace{replacement: ▁, prepend_scheme: always, split: false}.
+///     byte_fallback must be false/absent.
 ///
-/// Rejected: NFC, NFKC, NFKD, Replace, unknown types. These are not implemented
-/// in src/pretokenizer.rs; admitting them would silently diverge from the reference.
-///
-/// When layer A (tokenizer generality) makes normalization config-driven,
-/// delete this guard in the same change.
+/// Everything else is rejected with a message naming the unsupported type and
+/// pointing at docs/rfc-generalization.md.
 fn guard_tokenizer_family(tk: &serde_json::Value, model_name: &str) {
-    // 1. Reject non-WordPiece model types
     let model_type = tk["model"]["type"].as_str().unwrap_or("unknown");
-    if model_type != "WordPiece" {
+    match model_type {
+        "WordPiece" => {
+            // Existing WordPiece path: check normalizer matches pretokenizer.rs
+            check_normalizer(&tk["normalizer"], model_name);
+        }
+        "Unigram" => {
+            // New Unigram path: validate the shapes this runtime implements
+            guard_unigram_shapes(tk, model_name);
+        }
+        other => {
+            panic!(
+                "model '{}' uses a '{}' tokenizer; ese compiles WordPiece and Unigram \
+                 (SentencePiece) models only — BPE, WordLevel, and other types are not \
+                 supported (see docs/rfc-generalization.md).",
+                model_name, other
+            );
+        }
+    }
+}
+
+/// Validate the Unigram-specific shapes this runtime can faithfully compile.
+/// Panics naming any component that does not match the accepted shape.
+fn guard_unigram_shapes(tk: &serde_json::Value, model_name: &str) {
+    // byte_fallback must be absent or false
+    let byte_fallback = tk["model"]["byte_fallback"].as_bool().unwrap_or(false);
+    if byte_fallback {
         panic!(
-            "model '{}' uses a '{}' tokenizer; ese currently compiles WordPiece models only \
-             (Unigram support is planned — see docs/rfc-generalization.md)",
-            model_name, model_type
+            "model '{}' has byte_fallback:true; ese's Unigram runtime does not implement \
+             byte-fallback vocabs (see docs/rfc-generalization.md, layer A part 2).",
+            model_name
         );
     }
 
-    // 2. Check normalizer matches what src/pretokenizer.rs implements
-    check_normalizer(&tk["normalizer"], model_name);
+    // Pre-tokenizer must be Metaspace{replacement: ▁, prepend_scheme: always, split: false}
+    let pre = &tk["pre_tokenizer"];
+    if pre["type"].as_str() != Some("Metaspace") {
+        panic!(
+            "model '{}' has pre_tokenizer type '{}'; ese's Unigram runtime only supports \
+             Metaspace pre-tokenizers (see docs/rfc-generalization.md).",
+            model_name,
+            pre["type"].as_str().unwrap_or("unknown")
+        );
+    }
+    let replacement = pre["replacement"].as_str().unwrap_or("");
+    if replacement != "▁" {
+        panic!(
+            "model '{}' Metaspace has replacement {:?}; ese only supports ▁ (U+2581).",
+            model_name, replacement
+        );
+    }
+    let prepend_scheme = pre["prepend_scheme"].as_str().unwrap_or("always");
+    if prepend_scheme != "always" {
+        panic!(
+            "model '{}' Metaspace has prepend_scheme={:?}; ese's Unigram runtime only \
+             supports prepend_scheme=always (see docs/rfc-generalization.md, layer A part 2).",
+            model_name, prepend_scheme
+        );
+    }
+    let split = pre["split"].as_bool().unwrap_or(true);
+    if split {
+        panic!(
+            "model '{}' Metaspace has split:true; ese's Unigram runtime only supports \
+             split:false (the entire normalized string is passed as one chunk to Viterbi; \
+             see docs/rfc-generalization.md, layer A part 2).",
+            model_name
+        );
+    }
+
+    // Normalizer chain must be a Sequence of exactly the supported ops
+    check_unigram_normalizer(&tk["normalizer"], model_name);
+}
+
+/// Check that the Unigram normalizer chain consists only of the ops this
+/// runtime compiles: Precompiled, Regex Replace with " {2,}", single-char
+/// String Replaces (pad), Regex Replace with "\\s+", and Strip.
+fn check_unigram_normalizer(norm: &serde_json::Value, model_name: &str) {
+    match norm["type"].as_str() {
+        Some("Sequence") => {
+            if let Some(items) = norm["normalizers"].as_array() {
+                for item in items {
+                    check_unigram_normalizer(item, model_name);
+                }
+            }
+        }
+        Some("Precompiled") => {
+            // The charsmap is decoded later; just confirm the field is present
+            if norm["precompiled_charsmap"].as_str().is_none() {
+                panic!(
+                    "model '{}' Precompiled normalizer is missing precompiled_charsmap field.",
+                    model_name
+                );
+            }
+        }
+        Some("Replace") => {
+            let content = norm["content"].as_str().unwrap_or("");
+            if let Some(pattern) = norm["pattern"].get("Regex").and_then(|p| p.as_str()) {
+                // Only " {2,}" and "\\s+" are accepted
+                if pattern != " {2,}" && pattern != "\\s+" {
+                    panic!(
+                        "model '{}' has a Regex Replace with pattern {:?}; ese's Unigram \
+                         runtime only accepts ' {{2,}}' (collapse spaces) and '\\s+' \
+                         (collapse whitespace) — any other regex is not compiled \
+                         (see docs/rfc-generalization.md).",
+                        model_name, pattern
+                    );
+                }
+                // Both accepted regex patterns must replace with a single space
+                if content != " " {
+                    panic!(
+                        "model '{}' Regex Replace {:?} has content {:?}; expected a single space.",
+                        model_name, pattern, content
+                    );
+                }
+            } else if let Some(pattern) = norm["pattern"].get("String").and_then(|p| p.as_str()) {
+                // Pattern must be exactly one char; content must be " <char> "
+                let chars: Vec<char> = pattern.chars().collect();
+                if chars.len() != 1 {
+                    panic!(
+                        "model '{}' String Replace pattern {:?} is not exactly one character; \
+                         ese's Unigram runtime only compiles single-char pad replacements \
+                         (see docs/rfc-generalization.md).",
+                        model_name, pattern
+                    );
+                }
+                let expected_content = format!(" {} ", chars[0]);
+                if content != expected_content {
+                    panic!(
+                        "model '{}' String Replace pattern {:?} has content {:?}; expected {:?} \
+                         (space-char-space); ese only compiles that exact pad shape.",
+                        model_name, pattern, content, expected_content
+                    );
+                }
+            } else {
+                panic!(
+                    "model '{}' has a Replace normalizer with an unrecognized pattern shape; \
+                     ese accepts only Regex or String patterns \
+                     (see docs/rfc-generalization.md).",
+                    model_name
+                );
+            }
+        }
+        Some("Strip") => {
+            // Strip is accepted; strip_left/strip_right are read later
+        }
+        Some(other) => {
+            panic!(
+                "model '{}' has a '{}' normalizer op in the Unigram chain; ese's Unigram \
+                 runtime only compiles: Sequence, Precompiled, Replace (single-char pad or \
+                 the two exact whitespace regexes), and Strip \
+                 (see docs/rfc-generalization.md).",
+                model_name, other
+            );
+        }
+        None => {
+            panic!(
+                "model '{}' has a normalizer object with no 'type' field in the Unigram chain.",
+                model_name
+            );
+        }
+    }
 }
 
 fn check_normalizer(norm: &serde_json::Value, model_name: &str) {
