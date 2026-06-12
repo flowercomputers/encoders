@@ -13,8 +13,11 @@ pub fn wordpiece_accumulate(
     wp_buf: &mut String,
 ) {
     if word.chars().count() > crate::lookup::MAX_WORD_LEN {
-        *token_count += 1;
-        accumulate(vector, &crate::lookup::UNK);
+        // Word too long — falls back to UNK. When SKIP_UNK, neither accumulate nor count.
+        if !crate::lookup::SKIP_UNK {
+            *token_count += 1;
+            accumulate(vector, &crate::lookup::UNK);
+        }
         return;
     }
     let mut start = 0;
@@ -46,8 +49,11 @@ pub fn wordpiece_accumulate(
             }
         }
         if !matched {
-            *token_count += 1;
-            accumulate(vector, &crate::lookup::UNK);
+            // No sub-word match found — falls back to UNK. When SKIP_UNK, neither accumulate nor count.
+            if !crate::lookup::SKIP_UNK {
+                *token_count += 1;
+                accumulate(vector, &crate::lookup::UNK);
+            }
             return;
         }
     }

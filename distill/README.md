@@ -19,9 +19,13 @@ cache, distills it with PCA to 256 dimensions, and writes to `out/bge-base/`:
 Then compile the artifacts into ese:
 
 ```sh
-ESE_MODEL_DIR="$PWD/out/bge-base" ESE_NORMALIZE_OUTPUT=1 \
+ESE_MODEL_DIR="$PWD/out/bge-base" ESE_NORMALIZE_OUTPUT=1 ESE_SKIP_UNK=1 \
   cargo test --features tests,dim-256
 ```
+
+`ESE_NORMALIZE_OUTPUT=1` enables L2-normalization of output vectors (required for cosine
+similarity, matching model2vec's default). `ESE_SKIP_UNK=1` excludes UNK-id tokens from
+mean pooling, matching `model2vec.StaticModel.tokenize()` behavior for distilled artifacts.
 
 ## Usage
 
