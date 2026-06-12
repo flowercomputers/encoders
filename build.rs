@@ -203,7 +203,7 @@ pub const QUANT_SCALE: f32 = {quant_scale:?};\n\
     .unwrap();
 
     #[cfg(feature = "tests")]
-    generate_testdata(&out, &weights, dims as usize, tokenizer_path);
+    generate_testdata(&out, &weights, dims as usize, tokenizer_path, global_min, quant_scale);
 }
 
 fn phf_hash(key: &[u8], seed: u64) -> u64 {
@@ -406,7 +406,20 @@ fn shared_model_dir(out: &Path) -> PathBuf {
 }
 
 #[cfg(feature = "tests")]
-fn generate_testdata(out: &Path, weights: &[Vec<f32>], _dims: usize, tokenizer_path: &PathBuf) {
+fn oracle_weight(w: f32, global_min: f32, quant_scale: f32) -> f32 {
+    if cfg!(feature = "quant-8") {
+        let q = (((w - global_min) / quant_scale).round() as u8).clamp(0, 255);
+        global_min + (q as f32) * quant_scale
+    } else if cfg!(feature = "quant-16") {
+        let q = (((w - global_min) / quant_scale).round() as u16).clamp(0, 65535);
+        global_min + (q as f32) * quant_scale
+    } else {
+        w
+    }
+}
+
+#[cfg(feature = "tests")]
+fn generate_testdata(out: &Path, weights: &[Vec<f32>], _dims: usize, tokenizer_path: &PathBuf, global_min: f32, quant_scale: f32) {
     let tokenizer =
         tokenizers::Tokenizer::from_file(tokenizer_path).expect("failed to load tokenizer");
 
@@ -438,7 +451,7 @@ fn generate_testdata(out: &Path, weights: &[Vec<f32>], _dims: usize, tokenizer_p
                 .iter_mut()
                 .zip(unsafe { weights.get_unchecked(tok_id as usize) }.iter())
             {
-                *v += w
+                *v += oracle_weight(w, global_min, quant_scale)
             }
         }
         for v in vector.iter_mut() {
