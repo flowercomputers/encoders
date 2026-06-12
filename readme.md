@@ -129,7 +129,8 @@ handles embedding.
 
 ## Feature flags
 
-The default build is `dim-512`, unquantized, and single-threaded.
+The default build is `dim-512`, unquantized, and single-threaded. All available
+features are listed in [`Cargo.toml`](./Cargo.toml).
 
 | Feature | What it does | Default |
 | --- | --- | --- |
@@ -154,7 +155,8 @@ public API still returns `f32` vectors.
 ## Quickstart: Python
 
 The Python API is preliminary. It wraps the Rust crate with PyO3 and returns
-NumPy arrays.
+NumPy arrays. See [`./api-py/readme.md`](./api-py/readme.md) for full Python
+API documentation.
 
 Build and install the extension into your current Python environment:
 
