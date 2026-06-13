@@ -190,7 +190,7 @@ fn main() {
     let tk: serde_json::Value = serde_json::from_str(tokenizer_data.as_str()).unwrap();
 
     // ── Guard: tokenizer family and normalizer ────────────────────────────────
-    guard_tokenizer_family(&tk, &model.name);
+    let metaspace_split_whitespace = guard_tokenizer_family(&tk, &model.name);
 
     // NORMALIZE_OUTPUT: env var ESE_NORMALIZE_OUTPUT=1
     let normalize_output = env::var("ESE_NORMALIZE_OUTPUT").map(|v| v == "1").unwrap_or(false);
@@ -212,7 +212,7 @@ fn main() {
     };
 
     if model_type == "Unigram" {
-        build_unigram(&out, &tk, &model.name, &weights, dims as usize, normalize_output, skip_unk);
+        build_unigram(&out, &tk, &model.name, &weights, dims as usize, normalize_output, skip_unk, metaspace_split_whitespace);
         #[cfg(feature = "tests")]
         {
             let unk_id = tk["model"]["unk_id"].as_u64().unwrap_or(0) as usize;
@@ -534,6 +534,8 @@ pub const MODEL_NAME: &str = {model_name:?};\n\
 #[allow(dead_code)] pub const STRIP_RIGHT: bool = false;\n\
 #[allow(dead_code)] pub const METASPACE_CHAR: char = '\\u{{2581}}';\n\
 #[allow(dead_code)] pub const METASPACE_PREPEND: bool = false;\n\
+// METASPACE_SPLIT_WHITESPACE: dead in WordPiece builds (IS_UNIGRAM=false).\n\
+#[allow(dead_code)] pub const METASPACE_SPLIT_WHITESPACE: bool = false;\n\
 ",
             model_name = model.name,
         ),
@@ -572,6 +574,7 @@ fn build_unigram(
     dims: usize,
     normalize_output: bool,
     skip_unk: bool,
+    metaspace_split_whitespace: bool,
 ) {
     // ── Parse vocab: array of [token, score] pairs ────────────────────────────
     let vocab_arr = tk["model"]["vocab"]
@@ -854,6 +857,12 @@ pub const MODEL_NAME: &str = {model_name:?};\n\
 #[allow(dead_code)] pub const STRIP_RIGHT: bool = {strip_right};\n\
 #[allow(dead_code)] pub const METASPACE_CHAR: char = '\\u{{2581}}';\n\
 #[allow(dead_code)] pub const METASPACE_PREPEND: bool = true;\n\
+// METASPACE_SPLIT_WHITESPACE: when true, normalize() output is split on Unicode\n\
+// whitespace (char::is_whitespace), each word has Metaspace prepended independently,\n\
+// and Viterbi is run per-word. This implements the Sequence([WhitespaceSplit, Metaspace])\n\
+// pre-tokenizer shape used by XLM-R-family teachers. When false (bare Metaspace), the\n\
+// entire normalized string is passed as one chunk (existing behavior, unchanged).\n\
+#[allow(dead_code)] pub const METASPACE_SPLIT_WHITESPACE: bool = {metaspace_split_whitespace};\n\
 ",
         ),
     )
@@ -920,21 +929,27 @@ fn collect_unigram_norm_ops(
 ///   - Unigram: normalizer must be a Sequence of exactly the compiled ops
 ///     (Precompiled, space-collapse Regex Replace, single-char pad String
 ///     Replaces, whitespace-collapse Regex Replace, Strip). Pre-tokenizer
-///     must be Metaspace{replacement: ▁, prepend_scheme: always, split: false}.
+///     must be either:
+///       (a) bare Metaspace{replacement: ▁, prepend_scheme: always, split: false}
+///       (b) Sequence([WhitespaceSplit, Metaspace{replacement: ▁, prepend_scheme: always}])
 ///     byte_fallback must be false/absent.
+///
+/// Returns the METASPACE_SPLIT_WHITESPACE bool (true for shape b, false for shape a).
+/// This value is meaningless (false) for WordPiece builds — IS_UNIGRAM=false elides it.
 ///
 /// Everything else is rejected with a message naming the unsupported type and
 /// pointing at docs/rfc-generalization.md.
-fn guard_tokenizer_family(tk: &serde_json::Value, model_name: &str) {
+fn guard_tokenizer_family(tk: &serde_json::Value, model_name: &str) -> bool {
     let model_type = tk["model"]["type"].as_str().unwrap_or("unknown");
     match model_type {
         "WordPiece" => {
             // Existing WordPiece path: check normalizer matches pretokenizer.rs
             check_normalizer(&tk["normalizer"], model_name);
+            false // METASPACE_SPLIT_WHITESPACE unused for WordPiece
         }
         "Unigram" => {
-            // New Unigram path: validate the shapes this runtime implements
-            guard_unigram_shapes(tk, model_name);
+            // Unigram path: validate the shapes this runtime implements
+            guard_unigram_shapes(tk, model_name)
         }
         other => {
             panic!(
@@ -949,7 +964,32 @@ fn guard_tokenizer_family(tk: &serde_json::Value, model_name: &str) {
 
 /// Validate the Unigram-specific shapes this runtime can faithfully compile.
 /// Panics naming any component that does not match the accepted shape.
-fn guard_unigram_shapes(tk: &serde_json::Value, model_name: &str) {
+///
+/// Returns METASPACE_SPLIT_WHITESPACE:
+///   false — bare Metaspace{replacement: ▁, prepend_scheme: always, split: false}
+///   true  — Sequence([WhitespaceSplit, Metaspace{replacement: ▁, prepend_scheme: always}])
+///
+/// Three semantics facts extracted from the vendored tokenizers-0.21.4 source
+/// (recorded here per A1 — also in src/unigram.rs at the implementation site):
+///
+///   Fact 1 (legacy Metaspace deserialization): metaspace.rs:63-74
+///     `if let Some(false) = helper.add_prefix_space` — only `false` overrides
+///     prepend_scheme to Never. `add_prefix_space: true` (or absent) leaves the
+///     serde default (`default_prepend_scheme_value = PrependScheme::Always`, line 45-47)
+///     unchanged. `split.unwrap_or(true)` (line 74): absent `split` field defaults to true,
+///     NOT false. So legacy `{add_prefix_space: true}` = `{prepend_scheme: always, split: true}`.
+///
+///   Fact 2 (WhitespaceSplit whitespace definition): whitespace.rs:38
+///     `normalized.split(char::is_whitespace, SplitDelimiterBehavior::Removed)`
+///     Splits on Rust's `char::is_whitespace` (Unicode whitespace), delimiters removed
+///     (not included in any output chunk).
+///
+///   Fact 3 (Sequence chaining): sequence.rs:40-44
+///     `for pretokenizer in &self.pretokenizers { pretokenizer.pre_tokenize(pretokenized)?; }`
+///     Each stage operates on the PreTokenizedString produced by the previous stage,
+///     splitting each existing chunk further. So WhitespaceSplit first splits the input
+///     into words; Metaspace then runs independently on each word-chunk.
+fn guard_unigram_shapes(tk: &serde_json::Value, model_name: &str) -> bool {
     // byte_fallback must be absent or false
     let byte_fallback = tk["model"]["byte_fallback"].as_bool().unwrap_or(false);
     if byte_fallback {
@@ -960,16 +1000,96 @@ fn guard_unigram_shapes(tk: &serde_json::Value, model_name: &str) {
         );
     }
 
-    // Pre-tokenizer must be Metaspace{replacement: ▁, prepend_scheme: always, split: false}
+    // Pre-tokenizer: accept either shape and return the mode.
+    //
+    // Shape (a) — bare Metaspace{replacement: ▁, prepend_scheme: always, split: false}
+    //   → METASPACE_SPLIT_WHITESPACE = false (existing behavior, unchanged)
+    //
+    // Shape (b) — Sequence([WhitespaceSplit, Metaspace{replacement: ▁, prepend_scheme: always}])
+    //   → METASPACE_SPLIT_WHITESPACE = true (new per-word Viterbi path)
+    //   The Sequence shape is used by XLM-R-family teachers (distilled by model2vec).
+    //   In the distilled artifact the Metaspace uses the NEW serialization
+    //   (prepend_scheme/split fields explicit). The legacy form (add_prefix_space: true,
+    //   no split field) is the teacher's form; both map to prepend_scheme=always, split=true.
+    //
+    // Anything else is rejected by name.
     let pre = &tk["pre_tokenizer"];
-    if pre["type"].as_str() != Some("Metaspace") {
-        panic!(
-            "model '{}' has pre_tokenizer type '{}'; ese's Unigram runtime only supports \
-             Metaspace pre-tokenizers (see docs/rfc-generalization.md).",
-            model_name,
-            pre["type"].as_str().unwrap_or("unknown")
-        );
-    }
+    let pre_type = pre["type"].as_str().unwrap_or("unknown");
+
+    let metaspace_split_whitespace = match pre_type {
+        "Metaspace" => {
+            // Shape (a): bare Metaspace — must have split: false
+            check_metaspace_replacement(pre, model_name);
+            check_metaspace_prepend_scheme(pre, model_name);
+            let split = pre["split"].as_bool().unwrap_or(true);
+            if split {
+                panic!(
+                    "model '{}' Metaspace has split:true; ese's Unigram runtime only supports \
+                     split:false for bare Metaspace (the entire normalized string is passed as \
+                     one chunk to Viterbi; see docs/rfc-generalization.md, layer A part 2).",
+                    model_name
+                );
+            }
+            false
+        }
+        "Sequence" => {
+            // Shape (b): Sequence([WhitespaceSplit, Metaspace{…}])
+            // The Sequence must contain exactly [WhitespaceSplit, Metaspace].
+            // Any other component is rejected by name.
+            let items = pre["pretokenizers"].as_array().unwrap_or_else(|| panic!(
+                "model '{}' Sequence pre_tokenizer is missing 'pretokenizers' array.",
+                model_name
+            ));
+            if items.len() != 2 {
+                panic!(
+                    "model '{}' has a Sequence pre_tokenizer with {} components; ese only \
+                     supports exactly [WhitespaceSplit, Metaspace] (2 components).",
+                    model_name, items.len()
+                );
+            }
+            let first_type = items[0]["type"].as_str().unwrap_or("unknown");
+            if first_type != "WhitespaceSplit" {
+                panic!(
+                    "model '{}' Sequence pre_tokenizer[0] is '{}'; ese only supports \
+                     [WhitespaceSplit, Metaspace] — component 0 must be WhitespaceSplit \
+                     (see docs/rfc-generalization.md).",
+                    model_name, first_type
+                );
+            }
+            let second_type = items[1]["type"].as_str().unwrap_or("unknown");
+            if second_type != "Metaspace" {
+                panic!(
+                    "model '{}' Sequence pre_tokenizer[1] is '{}'; ese only supports \
+                     [WhitespaceSplit, Metaspace] — component 1 must be Metaspace \
+                     (see docs/rfc-generalization.md).",
+                    model_name, second_type
+                );
+            }
+            check_metaspace_replacement(&items[1], model_name);
+            check_metaspace_prepend_scheme(&items[1], model_name);
+            // split may be true or absent (default true per Fact 1) — both are fine here
+            // because WhitespaceSplit already removed spaces; the Metaspace split on ▁
+            // only produces one chunk per word (▁word has one ▁ at the front).
+            true
+        }
+        other => {
+            panic!(
+                "model '{}' has pre_tokenizer type '{}'; ese's Unigram runtime only supports \
+                 Metaspace (bare, split:false) or Sequence([WhitespaceSplit, Metaspace]) \
+                 (see docs/rfc-generalization.md).",
+                model_name, other
+            );
+        }
+    };
+
+    // Normalizer chain must be a Sequence of exactly the supported ops
+    check_unigram_normalizer(&tk["normalizer"], model_name);
+
+    metaspace_split_whitespace
+}
+
+/// Check Metaspace replacement is ▁ (U+2581).
+fn check_metaspace_replacement(pre: &serde_json::Value, model_name: &str) {
     let replacement = pre["replacement"].as_str().unwrap_or("");
     if replacement != "▁" {
         panic!(
@@ -977,6 +1097,22 @@ fn guard_unigram_shapes(tk: &serde_json::Value, model_name: &str) {
             model_name, replacement
         );
     }
+}
+
+/// Check Metaspace prepend_scheme is "always" (or absent, which defaults to always).
+/// Also accepts legacy add_prefix_space:true (Fact 1: maps to Always; the absence
+/// of add_prefix_space, or add_prefix_space:true, both leave prepend_scheme=Always).
+fn check_metaspace_prepend_scheme(pre: &serde_json::Value, model_name: &str) {
+    // Legacy form: if add_prefix_space is present and false → Never (rejected below).
+    // add_prefix_space:true or absent → prepend_scheme remains Always (fine).
+    if let Some(false) = pre["add_prefix_space"].as_bool() {
+        panic!(
+            "model '{}' Metaspace has add_prefix_space:false (prepend_scheme=Never); \
+             ese's Unigram runtime only supports prepend_scheme=always.",
+            model_name
+        );
+    }
+    // New-form: prepend_scheme field explicit.
     let prepend_scheme = pre["prepend_scheme"].as_str().unwrap_or("always");
     if prepend_scheme != "always" {
         panic!(
@@ -985,18 +1121,6 @@ fn guard_unigram_shapes(tk: &serde_json::Value, model_name: &str) {
             model_name, prepend_scheme
         );
     }
-    let split = pre["split"].as_bool().unwrap_or(true);
-    if split {
-        panic!(
-            "model '{}' Metaspace has split:true; ese's Unigram runtime only supports \
-             split:false (the entire normalized string is passed as one chunk to Viterbi; \
-             see docs/rfc-generalization.md, layer A part 2).",
-            model_name
-        );
-    }
-
-    // Normalizer chain must be a Sequence of exactly the supported ops
-    check_unigram_normalizer(&tk["normalizer"], model_name);
 }
 
 /// Check that the Unigram normalizer chain consists only of the ops this
