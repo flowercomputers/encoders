@@ -123,13 +123,13 @@ mod optional {
         // runtime faithfully reproduces the compiled model — it does NOT measure
         // quantization quality vs f32 (tracked separately).
         //
-        // Quantized builds use a slightly relaxed threshold (0.9999) to tolerate
+        // Quantized builds use a slightly relaxed threshold (0.99999) to tolerate
         // floating-point accumulation-order noise introduced when the oracle and the
         // runtime accumulate many dequantized values; observed minimums are ≥ 0.9999977
-        // (quant-8) and ≥ 0.9999986 (quant-16). The strict 0.999999 threshold applies
-        // to f32 builds, where no such noise exists.
+        // (quant-8) and ≥ 0.9999986 (quant-16) — both well above 0.99999. The strict
+        // 0.999999 threshold applies to f32 builds, where no such noise exists.
         let threshold = if cfg!(feature = "quant-8") || cfg!(feature = "quant-16") {
-            0.9999_f32
+            0.99999_f32
         } else {
             0.999999_f32
         };
