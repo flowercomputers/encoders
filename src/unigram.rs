@@ -22,6 +22,24 @@
 //    if target_node.starts_at.is_none() || candidate_best_path_score > target_node.best_path_score
 //    Strict >: the FIRST candidate placed at a given end position wins on equal score.
 //    We use the same strict-greater condition.
+//
+// Pre-tokenizer semantics facts (tokenizers-0.21.4, extracted for A1 / build.rs):
+//
+// Fact 1 (legacy Metaspace deserialization): pre_tokenizers/metaspace.rs:63-74
+//   `if let Some(false) = helper.add_prefix_space` — only `false` overrides prepend_scheme
+//   to Never. `add_prefix_space: true` (or absent) leaves prepend_scheme=Always (the serde
+//   default, line 45-47). `split.unwrap_or(true)` (line 74): absent `split` field defaults
+//   to true. So legacy `{add_prefix_space: true}` = `{prepend_scheme: always, split: true}`.
+//
+// Fact 2 (WhitespaceSplit whitespace definition): pre_tokenizers/whitespace.rs:38
+//   `normalized.split(char::is_whitespace, SplitDelimiterBehavior::Removed)`
+//   Splits on Rust's char::is_whitespace (Unicode whitespace); delimiters removed.
+//
+// Fact 3 (Sequence chaining): pre_tokenizers/sequence.rs:40-44
+//   Each stage calls pre_tokenize on the same PreTokenizedString, splitting existing chunks
+//   further. WhitespaceSplit splits input into words; Metaspace then runs per-word.
+//   Net effect for Sequence([WhitespaceSplit, Metaspace{prepend_scheme:always, split:true}]):
+//   each whitespace-delimited word becomes "▁word" (one chunk), passed to Viterbi separately.
 
 use crate::lookup;
 use spm_precompiled::Precompiled;
@@ -44,6 +62,18 @@ fn get_charsmap() -> &'static Precompiled {
 
 /// Encode a single text using the Unigram (Viterbi) path.
 /// Called from lib.rs when IS_UNIGRAM=true.
+///
+/// Two pre-tokenizer modes, selected by METASPACE_SPLIT_WHITESPACE (a build-time const):
+///
+///   false — bare Metaspace (existing path, byte-identical):
+///     normalize → apply_metaspace (whole string) → viterbi_segment → pool_and_mean
+///
+///   true  — Sequence([WhitespaceSplit, Metaspace]) (XLM-R-family):
+///     normalize → split on char::is_whitespace → per-word apply_metaspace_word →
+///     per-word viterbi_segment → pool_and_mean across all words' slots
+///
+/// The METASPACE_SPLIT_WHITESPACE=false branch is byte-identical to the original
+/// code path. The compiler elides the unused branch entirely via const evaluation.
 pub fn encode_single(text: &str) -> [f32; lookup::DIMENSIONS] {
     let normalized = normalize(text);
     // If the normalized string is empty (e.g. after stripping whitespace-only input),
@@ -52,9 +82,33 @@ pub fn encode_single(text: &str) -> [f32; lookup::DIMENSIONS] {
     if normalized.is_empty() {
         return [0.0f32; lookup::DIMENSIONS];
     }
-    let with_metaspace = apply_metaspace(&normalized);
-    let slots = viterbi_segment(&with_metaspace);
-    pool_and_mean(&slots)
+
+    if !lookup::METASPACE_SPLIT_WHITESPACE {
+        // Bare Metaspace path (existing behavior, unchanged).
+        let with_metaspace = apply_metaspace(&normalized);
+        let slots = viterbi_segment(&with_metaspace);
+        pool_and_mean(&slots)
+    } else {
+        // Sequence([WhitespaceSplit, Metaspace]) path.
+        //
+        // Fact 2 (whitespace.rs:38): split on char::is_whitespace, delimiters removed.
+        // Fact 3 (sequence.rs:40-44): Metaspace runs on each word-chunk independently.
+        // Fact 1 (metaspace.rs:74): prepend_scheme=always → each word gets "▁" prepended.
+        //
+        // We collect all Viterbi slots across all words, then pool them together.
+        // The denominator is the total token count across all words — matching the
+        // tokenizers oracle which pools the flat token sequence from all word chunks.
+        let mut all_slots: Vec<Option<&'static lookup::Slot>> = Vec::new();
+        for word in normalized.split(char::is_whitespace) {
+            if word.is_empty() {
+                continue; // Removed delimiter behavior: skip empty chunks
+            }
+            let with_metaspace = apply_metaspace_word(word);
+            let slots = viterbi_segment(&with_metaspace);
+            all_slots.extend(slots);
+        }
+        pool_and_mean(&all_slots)
+    }
 }
 
 // ── Normalizer ────────────────────────────────────────────────────────────────
@@ -177,6 +231,7 @@ fn collapse_whitespace_runs(s: &str) -> String {
 ///   - split=false: do NOT split on ▁; return the entire string as one chunk.
 ///
 /// The entire string is passed as one unit to the Viterbi segmenter.
+/// Used by the bare-Metaspace path (METASPACE_SPLIT_WHITESPACE=false).
 fn apply_metaspace(s: &str) -> String {
     // Replace spaces with ▁.
     let mut out = String::with_capacity(s.len() + lookup::METASPACE_CHAR.len_utf8());
@@ -194,6 +249,26 @@ fn apply_metaspace(s: &str) -> String {
         prefixed.push_str(&out);
         prefixed
     } else {
+        out
+    }
+}
+
+/// Apply Metaspace to a single whitespace-split word (no spaces).
+///
+/// Used by the Sequence([WhitespaceSplit, Metaspace]) path (METASPACE_SPLIT_WHITESPACE=true).
+/// The word has already been split on char::is_whitespace (delimiters removed, Fact 2),
+/// so it contains no spaces. Metaspace prepend_scheme=always (Fact 1) prepends ▁ unless
+/// the word already starts with ▁. No space replacement is needed (no spaces in input).
+/// The result is passed as one chunk to Viterbi.
+fn apply_metaspace_word(word: &str) -> String {
+    // No spaces in a whitespace-split word, so no replacement needed.
+    // Just prepend ▁ (always, Fact 1) unless already present.
+    if word.starts_with(lookup::METASPACE_CHAR) {
+        word.to_string()
+    } else {
+        let mut out = String::with_capacity(word.len() + lookup::METASPACE_CHAR.len_utf8());
+        out.push(lookup::METASPACE_CHAR);
+        out.push_str(word);
         out
     }
 }

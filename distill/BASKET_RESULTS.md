@@ -13,6 +13,22 @@ Run date: 2026-06-12. model2vec 0.8.2, ese commit range 4500ecc–907d9ca.
 | 4 | sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2 | Unigram (XLM-R) | 256 | 249999 | padding: BatchLongest→Fixed:0 | FAIL (clean) | N/A | N/A | N/A | CLEAN FAIL |
 | 5 | Alibaba-NLP/gte-modernbert-base | BPE | — | — | — | REJECTED | — | — | — | B5 PASS |
 
+## Plan 011 revisit (2026-06-12)
+
+Model 4 revisited after adding Sequence([WhitespaceSplit, Metaspace]) support (plan 011).
+e5-base added as stretch gate A6.
+
+| # | Model | Family | Dims | Vocab | Build | Min cosine | UNK tokens | Triplets | Verdict |
+|---|-------|--------|-----:|------:|-------|------------|------------|----------|---------|
+| 4r | sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2 | Unigram (XLM-R) | 256 | 249999 | PASS | 1.000000 | 12 | 2/3* | GREEN |
+| A6 | intfloat/multilingual-e5-base | Unigram (XLM-R) | 256 | 249999 | PASS | 1.000000 | 12 | 2/3* | GREEN |
+
+*Triplet 2 fails for both models: anchor="Machine learning models can encode semantic meaning."
+vs similar="Neural networks learn representations from data." scores lower than dissimilar
+("The weather in Tokyo is rainy this week."). This is a semantic quality artifact of the
+256-dim multilingual distillation, not a pre-tokenizer implementation bug — parity with
+model2vec is perfect (min cosine = 1.000000 across all 20 sentences including CJK + code).
+
 ## B6 cargo test sweep (no env flags, default NIFE model)
 
 All three runs pass with zero test failures.

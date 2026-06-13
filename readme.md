@@ -310,8 +310,10 @@ WordPiece.
 **Unigram** models must use:
 - A `Precompiled` charsmap normalizer (optionally wrapped in a `Sequence`
   with `Replace`/`Strip` steps for space collapsing and trimming).
-- A `Metaspace` pre-tokenizer with the `▁` replacement character, `always`
-  prepend, and `split: false`.
+- A pre-tokenizer that is either a bare `Metaspace` (`▁`, `always`, `split: false`)
+  or a `Sequence([WhitespaceSplit, Metaspace])` (`▁`, `always`) — the latter is the
+  shape used by XLM-R-family teachers (e.g. `paraphrase-multilingual-MiniLM-L12-v2`,
+  `multilingual-e5-base`) after model2vec distillation.
 - `byte_fallback: false`.
 
 BPE and other tokenizer families are not yet supported — see
