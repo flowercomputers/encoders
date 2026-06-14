@@ -36,7 +36,9 @@ Model: `static-retrieval-mrl-en-v1`, feature `dim-512`.
 |---|---|---:|---:|---:|---:|---:|---|
 | static-retrieval-mrl-en-v1 | ese/static | 512 | 30 522 | **0.4957** | — | — | default model; WordPiece; no normalize |
 | NIFE-mxbai-embed-large-v1 | ese/NIFE | 1024 | 107 962 | **0.4685** | — | — | WordPiece; normalize; large vocab |
+| **potion-base-8M** | ese/potion | 256 | 29 528 | **0.4426** | ~0.433 (card) | **>100%** | plan 017 G1; Tokenlearn'd English; WordPiece; skip_unk |
 | potion-multilingual-128M | ese/potion | 256 | 500 353 | **0.3699** | — | — | Unigram; skip_unk; multilingual |
+| **tokenlearn-minilm (gooaq 100k)** | ese/tokenlearn | 256 | 29 525 | **0.3969** | 0.5625 (meas.) | **70.6%** | plan 017 G3; Tokenlearn-trained MiniLM; 100k gooaq; 95s wall-clock; crosscheck cosine=1.000 |
 | distilled-bge-base-en-v1.5 | ese/distill | 256 | 29 525 | 0.1107 | 0.6320 (meas.) | **17.5%** | model2vec distill of BAAI/bge-base-en-v1.5 |
 | distilled-arctic-embed-xs | ese/distill | 256 | 29 525 | 0.0962 | 0.6121 (meas.) | **15.7%** | model2vec distill of Snowflake/snowflake-arctic-embed-xs |
 | distilled-all-MiniLM-L6-v2 | ese/distill | 256 | 29 525 | 0.1044 | 0.5625 (meas.) | **18.6%** | model2vec distill of sentence-transformers/all-MiniLM-L6-v2 |
@@ -45,6 +47,14 @@ Model: `static-retrieval-mrl-en-v1`, feature `dim-512`.
 **Teacher scores measured** on CPU with `SentenceTransformer` + `NanoBEIREvaluator` (13 datasets). `multilingual-e5-base` teacher marked "card" (NanoBEIR evaluation timed out on this hardware; MTEB-published mean nDCG@10 ≈ 0.5921).
 
 **Retention % = ese nDCG@10 / teacher nDCG@10 × 100.**
+
+### Plan 017 findings: Tokenlearn is the quality lever
+
+**G1 (potion-base-8M)** — the pre-trained Tokenlearn model scores **0.4426** on NanoBEIR via ese (expected ≥ 0.35; gate GREEN). This proves the Tokenlearn ceiling is reachable and ese compiles Tokenlearn'd artifacts faithfully (crosscheck cosine = 1.000).
+
+**G3 (tokenlearn-minilm, 100k gooaq)** — Tokenlearn training on 100k texts from `sentence-transformers/gooaq` lifts `all-MiniLM-L6-v2` distill from **0.1044 → 0.3969** (+3.8×, gate ≥ 0.25 GREEN, target ≥ 0.35 GREEN). Total wall-clock: 95s on Apple M4 Pro CPU (featurize 45s + train 37s + overhead). ese parity: crosscheck cosine = 1.000000, S-matrix corr = 1.00000, triplets 3/3.
+
+**Retention gap**: raw model2vec distill retains ~18% of teacher signal; Tokenlearn training on 100k sentences brings it to ~71%. Reference-tier (`potion-base-8M`, fineweb-large corpus) reaches ~102%. The corpus is the remaining quality knob — a larger/cleaner corpus (1M+ texts, fineweb) would push toward 0.43+.
 
 ---
 
