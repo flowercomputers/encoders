@@ -294,8 +294,10 @@ tokens (`[CLS]`/`[SEP]`) are **not** pooled by default — verified in
 | `ESE_TOKENIZER_SHA256` | Expected SHA-256 of `tokenizer.json` (strongly recommended when using `ESE_MODEL`). |
 | `ESE_MODEL_FILE` | Override the file subpath within the repo (default: `model.safetensors`). The built-in default model uses `0_StaticEmbedding/model.safetensors`. |
 | `ESE_TOKENIZER_FILE` | Override the tokenizer subpath within the repo (default: `tokenizer.json`). |
-| `ESE_NORMALIZE_OUTPUT` | Set to `1` to L2-normalize the output embedding vector. Required for mxbai-style models. |
+| `ESE_NORMALIZE_OUTPUT` | Set to `1` to L2-normalize the output embedding vector. Required for mxbai-style models and recommended for model2vec-distilled models. |
+| `ESE_SKIP_UNK` | Set to `1` to exclude unknown (`[UNK]`) tokens from the pooled mean. Matches `model2vec.StaticModel` behavior; recommended for model2vec-distilled models. |
 | `ESE_ADD_SPECIAL_TOKENS` | Set to `1` to pool `[CLS]`/`[SEP]` tokens in the mean (opt-in; off by default — static-embedding references do not use them). |
+| `ESE_CACHE_DIR` | Directory for cached model downloads (default: `target/ese-cache`). Set to a path outside `target/` to persist the cache across `cargo clean`. |
 
 When `ESE_MODEL_SHA256` or `ESE_TOKENIZER_SHA256` are omitted, the build
 emits a `cargo:warning` — checksums are optional for local experimentation
@@ -444,3 +446,61 @@ without loading an ML framework in the hot path.
 
 If you want a complete search system, combine `ese` with your own document
 store and nearest-neighbor search layer.
+
+## Changelog
+
+### Unreleased
+
+This release generalizes `ese` from a single hardcoded model into a build-time
+compiler for any supported static embedding model, and corrects the default
+model's pooling to match the upstream reference. Entries marked **[output
+change]** alter the embedding vectors a build produces.
+
+#### Changed — action may be required
+
+- **[output change] The default model's embeddings now match the upstream
+  reference exactly.** Two corrections landed: special tokens (`[CLS]`/`[SEP]`)
+  are no longer pooled — the sentence-transformers and model2vec static
+  references never insert them, and pooling content tokens only reproduces
+  `SentenceTransformer.encode()` at cosine 1.0000 (up from 0.9994; see
+  `spikes/specials-parity/`) — and the pooled mean now uses the exact reference
+  token count (earlier builds scaled by a slightly different denominator,
+  shifting magnitudes). **Re-embed any stored default-model vectors** for exact
+  cosine or dot-product comparisons; semantic ranking is effectively unchanged
+  (similarity-matrix correlation 0.9997 to the previous behavior). Set
+  `ESE_ADD_SPECIAL_TOKENS=1` to restore special-token pooling.
+- **Default builds no longer force `-Ctarget-cpu=native`.** Binaries are
+  portable by default (no SIGILL on CPUs older than the build machine). Opt in
+  with `RUSTFLAGS="-Ctarget-cpu=native"` for maximum throughput — see
+  [Performance note](#performance-note).
+
+#### Added
+
+- **Compile any WordPiece or Unigram (SentencePiece) model at build time** via
+  `ESE_MODEL=<repo>@<revision>` or a local `ESE_MODEL_DIR`, with no source edits
+  — including XLM-R / multilingual models. See
+  [Using a different model](#using-a-different-model).
+- **Distill any Hugging Face sentence-transformers teacher** into an ese model
+  with the `distill/` tool, which validates and auto-repairs the artifacts. See
+  [Distilling a transformer into an ese model](#distilling-a-transformer-into-an-ese-model).
+- **Per-row weight quantization** for `quant-8` / `quant-16` — a large fidelity
+  improvement on the shipped quantized wheel (worst-case quality vs the
+  unquantized model went from 0.94 to 0.9999).
+- **Reproducible, tamper-evident builds.** Model downloads are pinned to an
+  immutable revision and verified by SHA-256 before being compiled into the
+  binary.
+- **New build-time environment variables:** `ESE_NORMALIZE_OUTPUT`,
+  `ESE_SKIP_UNK`, `ESE_ADD_SPECIAL_TOKENS`, `ESE_CACHE_DIR`, `ESE_MODEL_SHA256`,
+  `ESE_TOKENIZER_SHA256` (see [Using a different model](#using-a-different-model)).
+- **Continuous integration** across an operating-system × feature matrix, with a
+  quantization-aware parity gate.
+
+#### Fixed
+
+- The embedding parity test verifies the runtime against the compiled (possibly
+  quantized) artifact, with a separate gate measuring quantized-vs-f32 fidelity.
+  Quantized builds — including the shipped Python wheel configuration — were
+  previously untestable.
+- WordPiece whole-word fallback matches the reference: a word with an unmatched
+  continuation piece becomes a single `[UNK]` (partial sub-word pieces are no
+  longer kept).
