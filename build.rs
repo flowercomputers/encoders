@@ -7,6 +7,16 @@ use std::{
     path::{Path, PathBuf},
 };
 
+/// Result of guard_tokenizer_family: identifies which build path to take.
+enum TokenizerFamily {
+    /// WordPiece (BERT-style, continuing_subword_prefix "##").
+    WordPiece,
+    /// Unigram (SentencePiece/Viterbi). Carries METASPACE_SPLIT_WHITESPACE.
+    Unigram { metaspace_split_whitespace: bool },
+    /// BPE with ByteLevel pre-tokenizer. Carries add_prefix_space from tokenizer.json.
+    Bpe { add_prefix_space: bool },
+}
+
 // ── Default model (built-in pinned constants) ────────────────────────────────
 // Pinned to upstream revision f60985c706f192d45d218078e49e5a8b6f15283a (resolved 2026-06-12).
 // To bump: update the revision in both URLs, re-download, recompute the SHA-256s.
@@ -191,7 +201,7 @@ fn main() {
     let tk: serde_json::Value = serde_json::from_str(tokenizer_data.as_str()).unwrap();
 
     // ── Guard: tokenizer family and normalizer ────────────────────────────────
-    let metaspace_split_whitespace = guard_tokenizer_family(&tk, &model.name);
+    let family = guard_tokenizer_family(&tk, &model.name);
 
     // NORMALIZE_OUTPUT: env var ESE_NORMALIZE_OUTPUT=1
     let normalize_output = env::var("ESE_NORMALIZE_OUTPUT").map(|v| v == "1").unwrap_or(false);
@@ -200,8 +210,6 @@ fn main() {
     // Only set this for distilled model2vec artifacts; default (false) keeps the
     // original ese behavior (UNK rows are included in the mean).
     let skip_unk = env::var("ESE_SKIP_UNK").map(|v| v == "1").unwrap_or(false);
-
-    let model_type = tk["model"]["type"].as_str().unwrap_or("WordPiece");
 
     // quant_max is shared by the packer, oracle, and generate_testdata.
     let quant_max: f32 = if cfg!(feature = "quant-8") {
@@ -212,24 +220,52 @@ fn main() {
         1.0 // f32 build: unused (row_quant_params called but oracle_weight returns w)
     };
 
-    if model_type == "Unigram" {
-        build_unigram(&out, &tk, &model.name, &weights, dims as usize, normalize_output, skip_unk, metaspace_split_whitespace);
-        #[cfg(feature = "tests")]
-        {
-            let unk_id = tk["model"]["unk_id"].as_u64().unwrap_or(0) as usize;
-            generate_testdata(
-                &out,
-                &weights,
-                dims as usize,
-                &tokenizer_path,
-                quant_max,
-                false, // Unigram models never add CLS/SEP
-                normalize_output,
-                skip_unk,
-                unk_id,
-            );
+    match &family {
+        TokenizerFamily::Unigram { metaspace_split_whitespace } => {
+            build_unigram(&out, &tk, &model.name, &weights, dims as usize, normalize_output, skip_unk, *metaspace_split_whitespace);
+            #[cfg(feature = "tests")]
+            {
+                let unk_id = tk["model"]["unk_id"].as_u64().unwrap_or(0) as usize;
+                generate_testdata(
+                    &out,
+                    &weights,
+                    dims as usize,
+                    &tokenizer_path,
+                    quant_max,
+                    false, // Unigram models never add CLS/SEP
+                    normalize_output,
+                    skip_unk,
+                    unk_id,
+                );
+            }
+            return;
         }
-        return;
+        TokenizerFamily::Bpe { add_prefix_space } => {
+            build_bpe(&out, &tk, &model.name, &weights, dims as usize, normalize_output, skip_unk, *add_prefix_space);
+            #[cfg(feature = "tests")]
+            {
+                // BPE models (distilled from model2vec) use unk_token from tokenizer.json.
+                // For SKIP_UNK purposes, find the unk_id from the vocab.
+                let unk_token = tk["model"]["unk_token"].as_str().unwrap_or("<unk>");
+                let vocab = tk["model"]["vocab"].as_object().expect("BPE model.vocab must be an object");
+                let unk_id = vocab.get(unk_token).and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                generate_testdata(
+                    &out,
+                    &weights,
+                    dims as usize,
+                    &tokenizer_path,
+                    quant_max,
+                    false, // BPE (model2vec distilled) models do not add CLS/SEP
+                    normalize_output,
+                    skip_unk,
+                    unk_id,
+                );
+            }
+            return;
+        }
+        TokenizerFamily::WordPiece => {
+            // Fall through to WordPiece path below.
+        }
     }
 
     // ── WordPiece path ────────────────────────────────────────────────────────
@@ -552,16 +588,27 @@ pub const MODEL_NAME: &str = {model_name:?};\n\
 #[allow(dead_code)] pub const METASPACE_PREPEND: bool = false;\n\
 // METASPACE_SPLIT_WHITESPACE: dead in WordPiece builds (IS_UNIGRAM=false).\n\
 #[allow(dead_code)] pub const METASPACE_SPLIT_WHITESPACE: bool = false;\n\
+// BPE-specific constants. Dead in WordPiece builds (IS_BPE=false elides the bpe path).\n\
+#[allow(dead_code)] pub const IS_BPE: bool = false;\n\
+#[allow(dead_code)] pub const IS_BPE_ADD_PREFIX_SPACE: bool = false;\n\
+#[allow(dead_code)] pub const MERGE_NUM_BUCKETS: usize = 1;\n\
+#[allow(dead_code)] pub const MERGE_TABLE_SIZE: usize = 1;\n\
+#[allow(dead_code)] pub const MERGE_TABLE_MASK: usize = 0;\n\
 ",
             model_name = model.name,
         ),
     )
     .unwrap();
 
-    // Emit dummy scores.bin and charsmap.bin for WordPiece builds (IS_UNIGRAM=false,
-    // so these are never referenced at runtime; they exist so include_bytes! compiles).
+    // Emit dummy files for WordPiece builds (non-BPE/non-Unigram paths are dead code).
+    // scores.bin and charsmap.bin: Unigram-specific, dummy for WordPiece.
+    // slot_ids.bin, merges.bin, merge_seeds.bin, merge_verify.bin: BPE-specific, dummy.
     fs::write(out.join("scores.bin"), &[0u8; 4]).unwrap();
     fs::write(out.join("charsmap.bin"), &[0u8; 0]).unwrap();
+    fs::write(out.join("slot_ids.bin"), &[0u8; 4]).unwrap();
+    fs::write(out.join("merges.bin"), &[0u8; 8]).unwrap();
+    fs::write(out.join("merge_seeds.bin"), &[0u8; 4]).unwrap();
+    fs::write(out.join("merge_verify.bin"), &[0u8; 8]).unwrap();
 
     #[cfg(feature = "tests")]
     generate_testdata(
@@ -876,7 +923,394 @@ pub const MODEL_NAME: &str = {model_name:?};\n\
 // pre-tokenizer shape used by XLM-R-family teachers. When false (bare Metaspace), the\n\
 // entire normalized string is passed as one chunk (existing behavior, unchanged).\n\
 #[allow(dead_code)] pub const METASPACE_SPLIT_WHITESPACE: bool = {metaspace_split_whitespace};\n\
+// BPE-specific constants. Dead in Unigram builds (IS_BPE=false elides the bpe path).\n\
+#[allow(dead_code)] pub const IS_BPE: bool = false;\n\
+#[allow(dead_code)] pub const IS_BPE_ADD_PREFIX_SPACE: bool = false;\n\
+#[allow(dead_code)] pub const MERGE_NUM_BUCKETS: usize = 1;\n\
+#[allow(dead_code)] pub const MERGE_TABLE_SIZE: usize = 1;\n\
+#[allow(dead_code)] pub const MERGE_TABLE_MASK: usize = 0;\n\
 ",
+        ),
+    )
+    .unwrap();
+
+    // Emit BPE-specific dummy binary files for Unigram builds (dead code, but
+    // include_bytes! in src/bpe.rs must compile even when IS_BPE=false).
+    fs::write(out.join("slot_ids.bin"), &[0u8; 4]).unwrap();
+    fs::write(out.join("merges.bin"), &[0u8; 8]).unwrap();
+    fs::write(out.join("merge_seeds.bin"), &[0u8; 4]).unwrap();
+    fs::write(out.join("merge_verify.bin"), &[0u8; 8]).unwrap();
+}
+
+// ── BPE build path ────────────────────────────────────────────────────────────
+
+/// Build all artifacts for a BPE (ByteLevel) model:
+///   - weights.bin / seeds.bin / verify.bin: vocab PHF (same layout as WordPiece/Unigram)
+///   - slot_ids.bin: [u32; TABLE_SIZE] mapping PHF slot → original vocab token id
+///   - merges.bin / merge_seeds.bin / merge_verify.bin: merge pair PHF
+///   - scores.bin / charsmap.bin: dummy files (not used by BPE)
+///   - model_constants.rs: BPE-specific consts (IS_BPE=true, MERGE_*, IS_BPE_ADD_PREFIX_SPACE)
+///
+/// The merge PHF key is (left_vocab_id as u64 << 32 | right_vocab_id as u64), encoded as
+/// 8-byte LE, using the same hash polynomial as the vocab PHF. Value per slot:
+///   rank:u32le + new_id:u32le (8 bytes total).
+/// Merge rank = index in the tokenizer.json "merges" array (0-based), exactly matching
+/// the vendored BPE model.rs:179 (i as u32 → rank) and word.rs merge_all ordering.
+#[allow(clippy::too_many_arguments)]
+fn build_bpe(
+    out: &Path,
+    tk: &serde_json::Value,
+    model_name: &str,
+    weights: &[Vec<f32>],
+    dims: usize,
+    normalize_output: bool,
+    skip_unk: bool,
+    add_prefix_space: bool,
+) {
+    // ── Parse vocab: object of token_string → vocab_id ───────────────────────
+    let vocab_obj = tk["model"]["vocab"]
+        .as_object()
+        .expect("BPE model.vocab must be an object (token → id)");
+
+    // Build (token_string, vocab_id) pairs sorted by vocab_id for determinism.
+    let mut entries: Vec<(String, usize)> = vocab_obj
+        .iter()
+        .filter_map(|(tok, id_val)| {
+            let id = id_val.as_u64()? as usize;
+            Some((tok.clone(), id))
+        })
+        .collect();
+    entries.sort_by_key(|(_, id)| *id);
+
+    // UNK token id (for UNK embedding extraction and SKIP_UNK oracle).
+    let unk_token = tk["model"]["unk_token"].as_str().unwrap_or("<unk>");
+    let unk_id = vocab_obj
+        .get(unk_token)
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize;
+
+    let zero_row = vec![0.0f32; dims];
+    let unk_row = if unk_id < weights.len() { &weights[unk_id] } else { &zero_row };
+
+    // ── PHF construction (same algorithm as WordPiece and Unigram) ─────────
+    let vocab_size = entries.len();
+    let table_size = vocab_size.next_power_of_two();
+    let table_mask = table_size - 1;
+    let num_buckets = vocab_size;
+
+    let mut buckets: Vec<Vec<usize>> = vec![vec![]; num_buckets];
+    for (i, (token, _)) in entries.iter().enumerate() {
+        let b = (phf_hash(token.as_bytes(), 0) as usize) % num_buckets;
+        buckets[b].push(i);
+    }
+    let mut bucket_order: Vec<usize> = (0..num_buckets).collect();
+    bucket_order.sort_by(|a, b| buckets[*b].len().cmp(&buckets[*a].len()));
+
+    let mut seeds: Vec<u32> = vec![0; num_buckets];
+    let mut verify: Vec<u64> = vec![0; table_size];
+    let mut slot_to_entry: Vec<usize> = vec![0; table_size]; // slot → entries index
+    let mut slot_to_vocab_id: Vec<u32> = vec![u32::MAX; table_size]; // slot → vocab_id
+    let mut occupied: Vec<bool> = vec![false; table_size];
+
+    for &bi in &bucket_order {
+        if buckets[bi].is_empty() {
+            continue;
+        }
+        let mut i: u32 = 0;
+        'search: loop {
+            let seed = i | 1;
+            i += 1;
+            assert!(i < 1_000_000, "BPE PHF construction stuck on bucket {bi}");
+
+            let mut trial_slots: Vec<usize> = Vec::with_capacity(buckets[bi].len());
+            let mut seen = HashSet::with_capacity(buckets[bi].len());
+
+            for &entry_idx in &buckets[bi] {
+                let slot = (phf_hash(entries[entry_idx].0.as_bytes(), seed as u64) as usize) & table_mask;
+                if occupied[slot] || !seen.insert(slot) {
+                    continue 'search;
+                }
+                trial_slots.push(slot);
+            }
+
+            seeds[bi] = seed;
+            for (j, &entry_idx) in buckets[bi].iter().enumerate() {
+                let slot = trial_slots[j];
+                occupied[slot] = true;
+                verify[slot] = phf_hash(entries[entry_idx].0.as_bytes(), u64::MAX);
+                slot_to_entry[slot] = entries[entry_idx].1; // vocab_id as weight row index
+                slot_to_vocab_id[slot] = entries[entry_idx].1 as u32;
+            }
+            break;
+        }
+    }
+
+    // ── Emit slot_ids.bin: [u32; TABLE_SIZE] (slot → vocab_id) ──────────────
+    let mut slot_ids_bin: Vec<u8> = Vec::with_capacity(table_size * 4);
+    for slot in 0..table_size {
+        slot_ids_bin.extend_from_slice(&slot_to_vocab_id[slot].to_le_bytes());
+    }
+    fs::write(out.join("slot_ids.bin"), &slot_ids_bin).unwrap();
+
+    // ── Emit weights.bin (same layout as WordPiece/Unigram) ─────────────────
+    let quant_max_bpe: f32 = if cfg!(feature = "quant-8") { 255.0 }
+        else if cfg!(feature = "quant-16") { 65535.0 }
+        else { 1.0 };
+    let slot_size_bpe = if cfg!(feature = "quant-8") || cfg!(feature = "quant-16") {
+        8 + 8 + dims * dtype_sz()
+    } else {
+        8 + dims * 4
+    };
+    let mut phf_slots: Vec<u8> = Vec::with_capacity(table_size * slot_size_bpe);
+    for slot in 0..table_size {
+        phf_slots.extend_from_slice(&verify[slot].to_le_bytes());
+        let row = if occupied[slot] {
+            let vid = slot_to_entry[slot];
+            if vid < weights.len() { &weights[vid] } else { &zero_row }
+        } else {
+            &zero_row
+        };
+        if cfg!(feature = "quant-8") || cfg!(feature = "quant-16") {
+            let (row_min, row_scale) = if occupied[slot] {
+                row_quant_params(row, quant_max_bpe)
+            } else {
+                (0.0_f32, 1.0_f32)
+            };
+            phf_slots.extend_from_slice(&row_min.to_le_bytes());
+            phf_slots.extend_from_slice(&row_scale.to_le_bytes());
+            phf_slots.extend_from_slice(&quantize_f32_to_bytes(row, row_min, row_scale));
+        } else {
+            phf_slots.extend_from_slice(&quantize_f32_to_bytes(row, 0.0, 1.0));
+        }
+    }
+    fs::write(out.join("weights.bin"), &phf_slots).unwrap();
+
+    // seeds.bin and verify.bin
+    let mut seeds_bin: Vec<u8> = Vec::with_capacity(num_buckets * 4);
+    for &s in &seeds { seeds_bin.extend_from_slice(&s.to_le_bytes()); }
+    fs::write(out.join("seeds.bin"), &seeds_bin).unwrap();
+    let mut verify_bin: Vec<u8> = Vec::with_capacity(table_size * 8);
+    for &v in &verify { verify_bin.extend_from_slice(&v.to_le_bytes()); }
+    fs::write(out.join("verify.bin"), &verify_bin).unwrap();
+
+    // ── Parse merges: array of ["left", "right"] pairs in rank order ─────────
+    // model.rs:174-192: merges[i] = (a, b) → rank=i, new_id=vocab[a+b] (or a+b[prefix_len..])
+    // For ByteLevel BPE: continuing_subword_prefix is absent (no prefix). new_token = a + b.
+    // We store (left_vocab_id, right_vocab_id) → (rank, new_id) in the merge PHF.
+    let merges_arr = tk["model"]["merges"]
+        .as_array()
+        .expect("BPE model.merges must be an array");
+
+    // Build merge entries: (key_u64, rank, new_id)
+    let mut merge_entries: Vec<(u64, u32, u32)> = Vec::with_capacity(merges_arr.len());
+
+    // continuing_subword_prefix: absent for ByteLevel BPE → "" (no prefix stripped).
+    let prefix_len = tk["model"]["continuing_subword_prefix"]
+        .as_str()
+        .map(|s| s.len())
+        .unwrap_or(0);
+
+    for (rank, merge_val) in merges_arr.iter().enumerate() {
+        // Each merge entry is either ["a", "b"] or "a b"
+        let (left_str, right_str) = if let Some(arr) = merge_val.as_array() {
+            (
+                arr.get(0).and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                arr.get(1).and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            )
+        } else if let Some(s) = merge_val.as_str() {
+            // "a b" form
+            let mut parts = s.splitn(2, ' ');
+            (
+                parts.next().unwrap_or("").to_string(),
+                parts.next().unwrap_or("").to_string(),
+            )
+        } else {
+            panic!("BPE model '{}': merge entry at rank {} is neither array nor string", model_name, rank);
+        };
+
+        // Look up left_id and right_id in the vocab.
+        let left_id = vocab_obj.get(&left_str)
+            .and_then(|v| v.as_u64())
+            .unwrap_or_else(|| panic!(
+                "BPE model '{}': merge rank {} left token '{}' not in vocab",
+                model_name, rank, left_str
+            )) as u32;
+        let right_id = vocab_obj.get(&right_str)
+            .and_then(|v| v.as_u64())
+            .unwrap_or_else(|| panic!(
+                "BPE model '{}': merge rank {} right token '{}' not in vocab",
+                model_name, rank, right_str
+            )) as u32;
+
+        // new_token = left_str + right_str[prefix_len..] (model.rs:186).
+        let new_token = format!("{}{}", left_str, &right_str[prefix_len..]);
+        let new_id = vocab_obj.get(&new_token)
+            .and_then(|v| v.as_u64())
+            .unwrap_or_else(|| panic!(
+                "BPE model '{}': merge rank {} new token '{}' not in vocab",
+                model_name, rank, new_token
+            )) as u32;
+
+        let key_u64: u64 = (left_id as u64) << 32 | right_id as u64;
+        merge_entries.push((key_u64, rank as u32, new_id));
+    }
+
+    // ── Merge PHF construction ────────────────────────────────────────────────
+    let merge_count = merge_entries.len();
+    let merge_table_size = merge_count.next_power_of_two();
+    let merge_table_mask = merge_table_size - 1;
+    let merge_num_buckets = merge_count;
+
+    let mut m_buckets: Vec<Vec<usize>> = vec![vec![]; merge_num_buckets];
+    for (i, (key, _, _)) in merge_entries.iter().enumerate() {
+        let b = (phf_hash(&key.to_le_bytes(), 0) as usize) % merge_num_buckets;
+        m_buckets[b].push(i);
+    }
+    let mut m_bucket_order: Vec<usize> = (0..merge_num_buckets).collect();
+    m_bucket_order.sort_by(|a, b| m_buckets[*b].len().cmp(&m_buckets[*a].len()));
+
+    let mut m_seeds: Vec<u32> = vec![0; merge_num_buckets];
+    let mut m_verify: Vec<u64> = vec![0; merge_table_size];
+    let mut m_values: Vec<(u32, u32)> = vec![(0, 0); merge_table_size]; // (rank, new_id) per slot
+    let mut m_occupied: Vec<bool> = vec![false; merge_table_size];
+
+    for &bi in &m_bucket_order {
+        if m_buckets[bi].is_empty() {
+            continue;
+        }
+        let mut i: u32 = 0;
+        'msearch: loop {
+            let seed = i | 1;
+            i += 1;
+            assert!(i < 1_000_000, "BPE merge PHF stuck on bucket {bi}");
+
+            let mut trial_slots: Vec<usize> = Vec::with_capacity(m_buckets[bi].len());
+            let mut seen = HashSet::with_capacity(m_buckets[bi].len());
+
+            for &entry_idx in &m_buckets[bi] {
+                let key_bytes = merge_entries[entry_idx].0.to_le_bytes();
+                let slot = (phf_hash(&key_bytes, seed as u64) as usize) & merge_table_mask;
+                if m_occupied[slot] || !seen.insert(slot) {
+                    continue 'msearch;
+                }
+                trial_slots.push(slot);
+            }
+
+            m_seeds[bi] = seed;
+            for (j, &entry_idx) in m_buckets[bi].iter().enumerate() {
+                let slot = trial_slots[j];
+                let key_bytes = merge_entries[entry_idx].0.to_le_bytes();
+                m_occupied[slot] = true;
+                m_verify[slot] = phf_hash(&key_bytes, u64::MAX);
+                m_values[slot] = (merge_entries[entry_idx].1, merge_entries[entry_idx].2);
+            }
+            break;
+        }
+    }
+
+    // ── Emit merge PHF files ──────────────────────────────────────────────────
+    let mut m_seeds_bin: Vec<u8> = Vec::with_capacity(merge_num_buckets * 4);
+    for &s in &m_seeds { m_seeds_bin.extend_from_slice(&s.to_le_bytes()); }
+    fs::write(out.join("merge_seeds.bin"), &m_seeds_bin).unwrap();
+
+    let mut m_verify_bin: Vec<u8> = Vec::with_capacity(merge_table_size * 8);
+    for &v in &m_verify { m_verify_bin.extend_from_slice(&v.to_le_bytes()); }
+    fs::write(out.join("merge_verify.bin"), &m_verify_bin).unwrap();
+
+    let mut m_data_bin: Vec<u8> = Vec::with_capacity(merge_table_size * 8);
+    for &(rank, new_id) in &m_values {
+        m_data_bin.extend_from_slice(&rank.to_le_bytes());
+        m_data_bin.extend_from_slice(&new_id.to_le_bytes());
+    }
+    fs::write(out.join("merges.bin"), &m_data_bin).unwrap();
+
+    // ── Emit scores.bin and charsmap.bin (dummies; not used by BPE) ──────────
+    fs::write(out.join("scores.bin"), &[0u8; 4]).unwrap();
+    fs::write(out.join("charsmap.bin"), &[0u8; 0]).unwrap();
+
+    // ── Per-row quantization params for UNK (CLS/SEP dummy for BPE) ──────────
+    let (unk_min_bpe, unk_scale_bpe) = if cfg!(feature = "quant-8") || cfg!(feature = "quant-16") {
+        row_quant_params(unk_row, quant_max_bpe)
+    } else {
+        (0.0_f32, 1.0_f32)
+    };
+    let unk_str = format_quantized_param(unk_row, unk_min_bpe, unk_scale_bpe);
+    let zero_str = format_quantized_param(&zero_row, 0.0, 1.0);
+
+    let dtype = dtype();
+    let dtype_sz = dtype_sz();
+    let slot_size_const_bpe = if cfg!(feature = "quant-8") || cfg!(feature = "quant-16") {
+        "8 + 8 + DIMENSIONS * DTYPE_SIZE".to_string()
+    } else {
+        "8 + DIMENSIONS * DTYPE_SIZE".to_string()
+    };
+
+    let (global_min_bpe, quant_scale_bpe_g) = if cfg!(feature = "quant-8") || cfg!(feature = "quant-16") {
+        let mut mn = f32::INFINITY;
+        let mut mx = f32::NEG_INFINITY;
+        for row in weights { for &v in row { mn = mn.min(v); mx = mx.max(v); } }
+        let s = if (mx - mn).abs() < f32::EPSILON { 1.0f32 } else { (mx - mn) / quant_max_bpe };
+        (mn, s)
+    } else {
+        (0.0_f32, 1.0_f32)
+    };
+
+    // ── Emit model_constants.rs ───────────────────────────────────────────────
+    fs::write(
+        out.join("model_constants.rs"),
+        format!(
+            "\
+pub const DIMENSIONS: usize = {dims};\n\
+pub type Param = [{dtype}; DIMENSIONS];\n\
+pub const TABLE_SIZE: usize = {table_size};\n\
+pub const TABLE_MASK: usize = {table_mask};\n\
+pub const NUM_BUCKETS: usize = {num_buckets};\n\
+pub const SLOT_SIZE: usize = {slot_size_const_bpe};\n\
+pub const UNK: Param = {unk_str};\n\
+pub const CLS: Param = {zero_str};\n\
+pub const SEP: Param = {zero_str};\n\
+// Per-row quantization params for special tokens. CLS/SEP are zero for BPE models.\n\
+#[allow(dead_code)] pub const UNK_MIN: f32 = {unk_min_bpe:?};\n\
+#[allow(dead_code)] pub const UNK_SCALE: f32 = {unk_scale_bpe:?};\n\
+#[allow(dead_code)] pub const CLS_MIN: f32 = 0.0;\n\
+#[allow(dead_code)] pub const CLS_SCALE: f32 = 1.0;\n\
+#[allow(dead_code)] pub const SEP_MIN: f32 = 0.0;\n\
+#[allow(dead_code)] pub const SEP_SCALE: f32 = 1.0;\n\
+pub const MAX_WORD_LEN: usize = 0;\n\
+pub const CONTINUING_PREFIX: &str = \"##\";\n\
+pub const ADD_SPECIAL_TOKENS: bool = false;\n\
+pub const NORMALIZE_OUTPUT: bool = {normalize_output};\n\
+#[allow(dead_code)] pub const SKIP_UNK: bool = {skip_unk};\n\
+pub const DTYPE_SIZE: usize = {dtype_sz};\n\
+#[allow(dead_code)] pub const QUANT_MIN: f32 = {global_min_bpe:?};\n\
+#[allow(dead_code)] pub const QUANT_SCALE: f32 = {quant_scale_bpe_g:?};\n\
+pub const MODEL_NAME: &str = {model_name:?};\n\
+// Unigram-specific constants. Dead in BPE builds (IS_UNIGRAM=false, IS_BPE=true).\n\
+#[allow(dead_code)] pub const IS_UNIGRAM: bool = false;\n\
+#[allow(dead_code)] pub const MIN_SCORE: f32 = 0.0;\n\
+#[allow(dead_code)] pub const MAX_TOKEN_CHARS: usize = 0;\n\
+#[allow(dead_code)] pub const UNK_ID: usize = {unk_id};\n\
+#[allow(dead_code)] pub const PAD_CHARS: &[char] = &[];\n\
+#[allow(dead_code)] pub const COLLAPSE_SPACES: bool = false;\n\
+#[allow(dead_code)] pub const COLLAPSE_WHITESPACE: bool = false;\n\
+#[allow(dead_code)] pub const STRIP_LEFT: bool = false;\n\
+#[allow(dead_code)] pub const STRIP_RIGHT: bool = false;\n\
+#[allow(dead_code)] pub const METASPACE_CHAR: char = '\\u{{2581}}';\n\
+#[allow(dead_code)] pub const METASPACE_PREPEND: bool = false;\n\
+#[allow(dead_code)] pub const METASPACE_SPLIT_WHITESPACE: bool = false;\n\
+// BPE-specific constants.\n\
+pub const IS_BPE: bool = true;\n\
+// IS_BPE_ADD_PREFIX_SPACE: when true, the ByteLevel pre-tokenizer prepends a space to\n\
+// the input text before splitting if it doesn't already start with one. Controls whether\n\
+// the first word gets the Ġ space-marker prefix (byte_level.rs:123-125).\n\
+pub const IS_BPE_ADD_PREFIX_SPACE: bool = {add_prefix_space};\n\
+// Merge PHF constants: MERGE_NUM_BUCKETS, MERGE_TABLE_SIZE, MERGE_TABLE_MASK.\n\
+// The merge PHF maps (left_id<<32 | right_id) → (rank:u32, new_id:u32) per BPE merge rule.\n\
+pub const MERGE_NUM_BUCKETS: usize = {merge_num_buckets};\n\
+#[allow(dead_code)] pub const MERGE_TABLE_SIZE: usize = {merge_table_size};\n\
+pub const MERGE_TABLE_MASK: usize = {merge_table_mask};\n\
+",
+            model_name = model_name,
         ),
     )
     .unwrap();
@@ -952,27 +1386,101 @@ fn collect_unigram_norm_ops(
 ///
 /// Everything else is rejected with a message naming the unsupported type and
 /// pointing at docs/rfc-generalization.md.
-fn guard_tokenizer_family(tk: &serde_json::Value, model_name: &str) -> bool {
+fn guard_tokenizer_family(tk: &serde_json::Value, model_name: &str) -> TokenizerFamily {
     let model_type = tk["model"]["type"].as_str().unwrap_or("unknown");
     match model_type {
         "WordPiece" => {
             // Existing WordPiece path: check normalizer matches pretokenizer.rs
             check_normalizer(&tk["normalizer"], model_name);
-            false // METASPACE_SPLIT_WHITESPACE unused for WordPiece
+            TokenizerFamily::WordPiece
         }
         "Unigram" => {
             // Unigram path: validate the shapes this runtime implements
-            guard_unigram_shapes(tk, model_name)
+            let metaspace_split_whitespace = guard_unigram_shapes(tk, model_name);
+            TokenizerFamily::Unigram { metaspace_split_whitespace }
+        }
+        "BPE" => {
+            // BPE path: validate ByteLevel pre-tokenizer shape and reject unsupported options.
+            let add_prefix_space = guard_bpe_shapes(tk, model_name);
+            TokenizerFamily::Bpe { add_prefix_space }
         }
         other => {
             panic!(
-                "model '{}' uses a '{}' tokenizer; ese compiles WordPiece and Unigram \
-                 (SentencePiece) models only — BPE, WordLevel, and other types are not \
-                 supported (see docs/rfc-generalization.md).",
+                "model '{}' uses a '{}' tokenizer; ese compiles WordPiece, Unigram \
+                 (SentencePiece), and BPE (ByteLevel) models — WordLevel and other types \
+                 are not supported (see docs/rfc-generalization.md).",
                 model_name, other
             );
         }
     }
+}
+
+/// Validate BPE-with-ByteLevel shapes this runtime can faithfully compile.
+/// Panics naming the unsupported component. Returns add_prefix_space.
+///
+/// Accepted shape:
+///   model.type == "BPE"
+///   pre_tokenizer.type == "ByteLevel"   (the only supported BPE pre-tokenizer)
+///   model.dropout: absent or null       (dropout sampling changes results; reject non-null)
+///   model.ignore_merges: absent or false (not implemented)
+///   model.byte_fallback: absent or false (ByteLevel BPE needs no byte fallback)
+///
+/// Anything else rejected by name (G5).
+fn guard_bpe_shapes(tk: &serde_json::Value, model_name: &str) -> bool {
+    // Pre-tokenizer must be ByteLevel (the only BPE pre-tokenizer we implement).
+    let pre_type = tk["pre_tokenizer"]["type"].as_str().unwrap_or("unknown");
+    if pre_type != "ByteLevel" {
+        panic!(
+            "model '{}' has pre_tokenizer type '{}'; ese's BPE runtime only supports \
+             the 'ByteLevel' pre-tokenizer. Other BPE pre-tokenizers are not supported \
+             (see docs/rfc-generalization.md).",
+            model_name, pre_type
+        );
+    }
+
+    // dropout must be absent or null (non-null dropout changes tokenization; reject it).
+    let dropout = &tk["model"]["dropout"];
+    if !dropout.is_null() && !dropout.is_null() {
+        // Check if it's actually present and non-null
+        if let Some(d) = dropout.as_f64() {
+            if d > 0.0 {
+                panic!(
+                    "model '{}' has BPE dropout={d}; ese's BPE runtime does not support \
+                     dropout sampling (results would be non-deterministic). \
+                     Reject and re-distill with dropout=null.",
+                    model_name
+                );
+            }
+        }
+    }
+
+    // ignore_merges must be absent or false (not implemented).
+    let ignore_merges = tk["model"]["ignore_merges"].as_bool().unwrap_or(false);
+    if ignore_merges {
+        panic!(
+            "model '{}' has ignore_merges:true; ese's BPE runtime does not implement \
+             ignore_merges. This option is rarely used in static embedding models.",
+            model_name
+        );
+    }
+
+    // byte_fallback must be absent or false (ByteLevel BPE doesn't need it).
+    let byte_fallback = tk["model"]["byte_fallback"].as_bool().unwrap_or(false);
+    if byte_fallback {
+        panic!(
+            "model '{}' has byte_fallback:true; ese's BPE runtime does not implement \
+             byte-fallback (ByteLevel BPE models don't need it — all bytes are in the vocab).",
+            model_name
+        );
+    }
+
+    // Extract add_prefix_space from the ByteLevel pre-tokenizer.
+    // Default is true for ByteLevel (byte_level.rs:75-82 Default impl).
+    let add_prefix_space = tk["pre_tokenizer"]["add_prefix_space"]
+        .as_bool()
+        .unwrap_or(true);
+
+    add_prefix_space
 }
 
 /// Validate the Unigram-specific shapes this runtime can faithfully compile.
@@ -1654,8 +2162,12 @@ fn generate_testdata(
     skip_unk: bool,
     unk_id: usize,
 ) {
-    let tokenizer =
+    let mut tokenizer =
         tokenizers::Tokenizer::from_file(tokenizer_path).expect("failed to load tokenizer");
+    // Disable padding: some tokenizers (e.g. distilroberta) have padding configured
+    // (max_length=128), which causes pad tokens to be included in the oracle mean.
+    // For static embedding parity tests we want only the content tokens.
+    tokenizer.with_padding(None);
 
     let inputs: Vec<&str> = vec![
         "Hello world",
