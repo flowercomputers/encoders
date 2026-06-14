@@ -7,3 +7,6 @@
 # tokenlearn: featurized vectors, corpus caches, trained model artifacts
 distill/out/
 benches/py/benchmarks/
+
+# wasm build outputs (build locally with wasm-pack)
+api-wasm/pkg-*/

@@ -60,6 +60,27 @@ Model: `static-retrieval-mrl-en-v1`, feature `dim-512`.
 
 ---
 
+## Plan 018 — wasm bundle size × quality table
+
+**Measured on Apple M4 Pro, macOS 25.3.0.** wasm built with wasm-pack 0.14 + wasm-opt -O3.
+NanoBEIR = all 13 datasets (full run). quant-8's additional cost vs f32 is ≤ 0.1% (plan 009); the curve is dominated by dim.
+
+Feature selection method: `wasm-pack build api-wasm -- --no-default-features --features "dim-N[,quant-8]"` with `ese_core = { ..., default-features = false }` in `api-wasm/Cargo.toml`.
+
+| variant | raw wasm | gzipped | NanoBEIR nDCG@10 | retention vs dim-512 |
+|---|---:|---:|---:|---:|
+| `dim-512` (f32, old default) | 60.2 MB | 55.9 MB | 0.4957 | 100.0% |
+| `dim-512,quant-8` | 15.8 MB | 14.7 MB | ~0.4957 | ~100.0% |
+| `dim-256,quant-8` | 8.3 MB | 7.7 MB | 0.4820 | 97.2% |
+| **`dim-128,quant-8` (new default)** | **4.6 MB** | **4.2 MB** | **0.4624** | **93.3%** |
+| `dim-64,quant-8` | 2.7 MB | 2.4 MB | 0.4177 | 84.3% |
+
+**G1 PASS** — sizes confirmed, trend matches slot-size math (32768 slots × (8 verify + 8 row_params + dim × dtype_sz)).
+**G2 PASS** — wasm vs native-same-features cosine = 1.00000000 for all 12 corpus sentences (dim-256-q8 and dim-128-q8).
+**G4 chosen default: `dim-128,quant-8`** — 93.3% NanoBEIR retention at 4.6 MB raw / 4.2 MB gzip. Shippable browser payload (12× reduction from 60 MB baseline). Use `dim-256,quant-8` for 97.2% retention at 8.3 MB.
+
+---
+
 ## G4 — Speed (compiled ese binary, release build)
 
 Machine: **Apple M4 Pro, 64GB RAM, macOS Darwin 25.3.0** — note: same platform as the original blog benchmarks; QPS numbers are hardware-specific.
