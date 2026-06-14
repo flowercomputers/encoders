@@ -14,3 +14,6 @@ api-wasm/pkg-*/
 # session decision-record + verification spikes — kept locally, excluded from the branch for now
 /plans/
 /spikes/
+
+# local Claude Code session/worktree state
+/.claude/
