@@ -52,6 +52,8 @@ Model: `static-retrieval-mrl-en-v1`, feature `dim-512`.
 
 **G1 (potion-base-8M)** — the pre-trained Tokenlearn model scores **0.4426** on NanoBEIR via ese (expected ≥ 0.35; gate GREEN). This proves the Tokenlearn ceiling is reachable and ese compiles Tokenlearn'd artifacts faithfully (crosscheck cosine = 1.000).
 
+**Leakage control (reviewer-verified)** — to rule out that the lift is merely gooaq (Q&A) matching NanoBEIR's Q&A datasets, the same two models were measured on **non-Q&A** datasets (SciFact + NFCorpus, scientific/medical retrieval): raw distill **0.083** → tokenlearn **0.344** (4.1×). The lift is larger off-domain than on the full set, so it is a genuine retrieval-quality gain, not a training-corpus artifact.
+
 **G3 (tokenlearn-minilm, 100k gooaq)** — Tokenlearn training on 100k texts from `sentence-transformers/gooaq` lifts `all-MiniLM-L6-v2` distill from **0.1044 → 0.3969** (+3.8×, gate ≥ 0.25 GREEN, target ≥ 0.35 GREEN). Total wall-clock: 95s on Apple M4 Pro CPU (featurize 45s + train 37s + overhead). ese parity: crosscheck cosine = 1.000000, S-matrix corr = 1.00000, triplets 3/3.
 
 **Retention gap**: raw model2vec distill retains ~18% of teacher signal; Tokenlearn training on 100k sentences brings it to ~71%. Reference-tier (`potion-base-8M`, fineweb-large corpus) reaches ~102%. The corpus is the remaining quality knob — a larger/cleaner corpus (1M+ texts, fineweb) would push toward 0.43+.
