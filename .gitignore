@@ -10,3 +10,7 @@ benches/py/benchmarks/
 
 # wasm build outputs (build locally with wasm-pack)
 api-wasm/pkg-*/
+
+# session decision-record + verification spikes — kept locally, excluded from the branch for now
+/plans/
+/spikes/
