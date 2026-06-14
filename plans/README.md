@@ -28,6 +28,10 @@ Repo verification baseline (measured at `5155c13`): `cargo test` passes;
 | 006 | Manifest-driven model ingestion (ESE_MODEL env config) | P2 | M | 003, 004; design in 005 | DONE (merged at `0bfe5de`, 2026-06-12; reviewed; NIFE-mxbai compiles + passes parity via env config only) |
 | 007 | Reviewability cleanup (KISS pass: honest guards, dedup helpers, test indentation, doc/CI drift, specials-id cross-check) | P1 | M | 001-006 | DONE (merged at `d3c71c6`, 2026-06-12; reviewed; potion-base-8M now REJECTED at build with the id-inconsistency message — the silent-divergence class is closed) |
 | 009 | Layer-E part 1: per-row quantization + whole-word-UNK fidelity | P1 | M-L | 002, 007, 010 | DONE (merged at `cbdea1e`, 2026-06-12; reviewed; quant-8 quality 0.9408→0.999965 worst case with a prove-then-fix gate in history; B2 divergence 0.795 verified independently; follow-up: quant parity threshold can tighten 0.9999→0.99999 per measured minima) |
+| 013 | Phase 1 — NanoBEIR quality-tier table (measure all compilable models) | P1 | M | 008,010,011,012 | TODO |
+| 014 | Phase 2a — BPE tokenizer support (RoBERTa/ModernBERT/GTE family) | P1 | L | 008,010,012 | TODO |
+| 015 | Phase 2b — WebAssembly target (in-browser, sub-ms) | P1 | M-L | core | TODO |
+| 016 | Phase 3 — Vocab surgery + reweighting (layer E quality) | P1 | L | 013 | BLOCKED (on 013 — needs the quality gap map) |
 | 012 | Specials off by default (match real static reference; unblocks potion-base-8M; S-matrix harness check) | P1 | M | 010 | DONE (merged at `452efa2`, 2026-06-13; reviewed; default S-matrix delta vs real ST 0.00141→0.00000 verified by me; potion-base-8M compiles; quant-16 quality threshold 0.999999→0.99999 verified benign at measured 0.9999989; **default output changed — re-embed stored default vectors**) |
 | 011 | Unigram Sequence pre-tokenizer (XLM-R distills) + quant threshold tighten | P1 | M | 008, 009, 010 | DONE (merged at `4da83c7`, 2026-06-13; reviewed; paraphrase-multilingual AND multilingual-e5-base distill+compile at cross-language cosine 1.0; the 2/3-triplet result is the distilled model's own quality, reproduced identically by model2vec — recorded as a quality-tier data point) |
 | 010 | Distillation front-end (any HF teacher → ese artifacts; two-stage: tool + model basket) | P1 | L | 006, 008 | DONE (stage 1 merged `9d4aec8`, stage 2 merged `999acb4`, 2026-06-12; reviewed; basket: bge-base + arctic-embed-xs + all-MiniLM distill+compile+crosscheck at min cosine 1.0; XLM-R multilingual = clean fail on Sequence pre-tokenizer; BPE teacher rejected cleanly) |
@@ -35,6 +39,22 @@ Repo verification baseline (measured at `5155c13`): `cargo test` passes;
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale)
+
+## Phase 2 roadmap (2026-06-14) — toward universal compilation + most-performant
+
+The first 12 plans generalized ese from one hardcoded model to a compiler
+for any WordPiece/Unigram model (static or distilled-transformer). The
+remaining direction work is phased:
+
+- **Phase 1 (013)**: measure — NanoBEIR quality + speed for every compilable
+  model. Foundational; informs Phase 3. Runs in parallel with Phase 2.
+- **Phase 2 (014 BPE, 015 wasm)**: universalize + deploy. Independent of each
+  other and of Phase 1 — dispatched in parallel. 014 closes the last major
+  tokenizer family; 015 makes "fastest static embedding, anywhere" visceral.
+- **Phase 3 (016)**: quality — vocab surgery/reweighting, the lever past the
+  static ceiling. BLOCKED on 013 (targets the measured gaps).
+
+013/014/015 dispatched as parallel background sub-agents on 2026-06-14.
 
 ## Dependency notes
 
