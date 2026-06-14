@@ -277,9 +277,12 @@ so you can compare `ours` against entries in `benches/py/models.txt`.
 ## Using a different model
 
 `ese` selects the compiled model at build time via environment variables — no
-source edits required. The build script derives tokenizer facts (special tokens,
-continuation prefix, output normalization) automatically from the model
-artifacts.
+source edits required. The build script derives tokenizer facts (continuation
+prefix, output normalization) automatically from the model artifacts. Special
+tokens (`[CLS]`/`[SEP]`) are **not** pooled by default — verified in
+`spikes/specials-parity/` to produce a cosine of 1.0000 against the real
+`SentenceTransformer.encode()` reference (specials-on was 0.9994). Set
+`ESE_ADD_SPECIAL_TOKENS=1` to opt in if your model explicitly requires it.
 
 ### Environment variables
 
@@ -292,6 +295,7 @@ artifacts.
 | `ESE_MODEL_FILE` | Override the file subpath within the repo (default: `model.safetensors`). The built-in default model uses `0_StaticEmbedding/model.safetensors`. |
 | `ESE_TOKENIZER_FILE` | Override the tokenizer subpath within the repo (default: `tokenizer.json`). |
 | `ESE_NORMALIZE_OUTPUT` | Set to `1` to L2-normalize the output embedding vector. Required for mxbai-style models. |
+| `ESE_ADD_SPECIAL_TOKENS` | Set to `1` to pool `[CLS]`/`[SEP]` tokens in the mean (opt-in; off by default — static-embedding references do not use them). |
 
 When `ESE_MODEL_SHA256` or `ESE_TOKENIZER_SHA256` are omitted, the build
 emits a `cargo:warning` — checksums are optional for local experimentation

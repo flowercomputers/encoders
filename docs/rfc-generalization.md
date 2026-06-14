@@ -22,7 +22,7 @@ Training provenance is upstream and invisible at deployment. This is the **prove
 
 **EmbeddingMatrix** is the float32 (or quantized) row table mapping token ids to embedding vectors.
 
-**PoolingSpec** describes how token embeddings are combined: `mean | weighted(zipf/idf) | sif`, plus which special tokens contribute to the denominator. Plan 004 fixed the denominator semantics for the default model; the IR must carry these explicitly so optimization passes (e.g., normalization folding) preserve them.
+**PoolingSpec** describes how token embeddings are combined: `mean | weighted(zipf/idf) | sif`. Special tokens (`[CLS]`/`[SEP]`) are **not** pooled by default (plan 012: static-embedding references — sentence-transformers AND model2vec — do not pool specials; verified in `spikes/specials-parity/` at cosine 1.0000 vs 0.9994 with specials). The opt-in `ESE_ADD_SPECIAL_TOKENS=1` enables pooling for the rare model that requires it. The IR must carry pooling details explicitly so optimization passes (e.g., normalization folding) preserve them.
 
 ese's existing `build.rs` is already a single-target, single-pass version of this compiler. This RFC fixes the architecture so implementation plans compose instead of accreting one-off hacks.
 
@@ -115,7 +115,7 @@ Two candidate architectures for tokenizer generality:
 
 Target model: `minishlab/potion-multilingual-128M` (Unigram, Metaspace, vocab=500 353, dim=256).  
 Input set: 200 sentences across English (60), Chinese (30), Japanese (30), Thai (25), code/identifiers (40), German (15).  
-Reference: `model2vec.StaticModel.from_pretrained(…).encode(…)` — mean-pool all token rows (including specials), then L2-normalize.  
+Reference: `model2vec.StaticModel.from_pretrained(…).encode(…)` — mean-pool content-token rows only (no special tokens; see `spikes/specials-parity/`), then L2-normalize.  
 Greedy-ified: `TokenizerModel.from_string(tok_json).make_model_greedy().to_tokenizer()` → tokenize → mean-pool same rows → L2-normalize.
 
 | Language | N | Min | P5 | Median | P95 | Max | Pass? |
@@ -280,7 +280,7 @@ This decision affects the default-model update workflow and the public API contr
 
 **Script**: `spikes/greedy-fidelity/measure_fidelity.py`  
 **Model**: `minishlab/potion-multilingual-128M` (Unigram, Metaspace, 500 353-token vocab, 256-dim)  
-**Reference**: `model2vec.StaticModel.from_pretrained(…).encode(…)` — mean-pools all token rows (including CLS/SEP) then L2-normalizes output vectors (verified: reference output is unit-norm)  
+**Reference**: `model2vec.StaticModel.from_pretrained(…).encode(…)` — mean-pools content-token rows only (no CLS/SEP; see `spikes/specials-parity/` and plan 012) then L2-normalizes output vectors (verified: reference output is unit-norm)  
 **Greedy path**: `skeletoken.TokenizerModel.from_string(tok_json).make_model_greedy().to_tokenizer()` → tokenize → mean-pool same EmbeddingMatrix rows → L2-normalize  
 **Input set**: 200 sentences — English (60), Chinese (30), Japanese (30), Thai (25), code/identifiers (40), German (15)  
 **skeletoken version**: 0.3.3  
