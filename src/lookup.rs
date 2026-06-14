@@ -46,9 +46,14 @@ static SCORES_RAW: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/scores.bin"
 #[inline(always)]
 pub fn lookup_slot(key: &str) -> Option<&'static Slot> {
     let bytes = key.as_bytes();
-    let bucket = (hash(bytes, 0) as usize) % NUM_BUCKETS;
+    // Use u64 arithmetic throughout before casting to usize.
+    // On 64-bit hosts usize == u64 so this is identical to the original.
+    // On wasm32 (usize == u32) a direct `as usize` would truncate the hash
+    // before the modulo, producing wrong bucket indices — the PHF was built
+    // with 64-bit hashes, so the runtime must match.
+    let bucket = (hash(bytes, 0) % NUM_BUCKETS as u64) as usize;
     unsafe {
-        let slot = (hash(bytes, *SEEDS.get_unchecked(bucket) as u64) as usize) & TABLE_MASK;
+        let slot = (hash(bytes, *SEEDS.get_unchecked(bucket) as u64) & TABLE_MASK as u64) as usize;
         let entry = SLOTS.get_unchecked(slot);
         if entry.verify == hash(bytes, u64::MAX) {
             Some(entry)
@@ -74,10 +79,10 @@ pub fn lookup(key: &str) -> Option<&'static Param> {
 #[inline(always)]
 pub fn lookup_slot_with_score(key: &str) -> Option<(&'static Slot, f32)> {
     let bytes = key.as_bytes();
-    let bucket = (hash(bytes, 0) as usize) % NUM_BUCKETS;
+    let bucket = (hash(bytes, 0) % NUM_BUCKETS as u64) as usize;
     unsafe {
         let seed = *SEEDS.get_unchecked(bucket) as u64;
-        let slot_idx = (hash(bytes, seed) as usize) & TABLE_MASK;
+        let slot_idx = (hash(bytes, seed) & TABLE_MASK as u64) as usize;
         let entry = SLOTS.get_unchecked(slot_idx);
         if entry.verify == hash(bytes, u64::MAX) {
             let score_offset = slot_idx * 4;
@@ -98,10 +103,10 @@ pub fn lookup_slot_with_score(key: &str) -> Option<(&'static Slot, f32)> {
 #[inline(always)]
 pub fn lookup_with_score(key: &str) -> Option<(&'static Param, f32)> {
     let bytes = key.as_bytes();
-    let bucket = (hash(bytes, 0) as usize) % NUM_BUCKETS;
+    let bucket = (hash(bytes, 0) % NUM_BUCKETS as u64) as usize;
     unsafe {
         let seed = *SEEDS.get_unchecked(bucket) as u64;
-        let slot = (hash(bytes, seed) as usize) & TABLE_MASK;
+        let slot = (hash(bytes, seed) & TABLE_MASK as u64) as usize;
         let entry = SLOTS.get_unchecked(slot);
         if entry.verify == hash(bytes, u64::MAX) {
             // Read the f32 score from the parallel scores array at this slot

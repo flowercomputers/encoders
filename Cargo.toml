@@ -15,6 +15,7 @@ categories = ["text-processing", "artificial-intelligence", "compression", "enco
 resolver = "3"
 members = [
   "api-py",
+  "api-wasm",
 ]
 
 [features]
