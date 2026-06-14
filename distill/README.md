@@ -123,3 +123,67 @@ ese compiles it into a lookup table at `cargo build` time.
   reduce binary size and lookup cost. 256 is recommended for bge-base-en-v1.5.
 - Always pass `ESE_NORMALIZE_OUTPUT=1` when compiling ese with distilled bge/e5
   models — these are trained with cosine similarity and expect normalized vectors.
+
+---
+
+## Tokenlearn-quality distillation (plan 017)
+
+Raw `model2vec.distill()` retains only ~18% of the teacher's retrieval signal
+(NanoBEIR 0.10 vs 0.56 for the teacher). **Tokenlearn** (`tokenlearn_train.py`)
+recovers most of that signal by featurizing a corpus with the teacher and training
+the static embedding table to reproduce the teacher's mean-pooled vectors.
+
+Measured results (plan 017, Apple M4 Pro, CPU-only):
+- Raw MiniLM distill: **0.1044** NanoBEIR (18.6% retention)
+- Tokenlearn-trained (100k gooaq, 95s wall-clock): **0.3969** NanoBEIR (70.6% retention)
+- Lift: **+0.29 absolute, 3.8×** — proving Tokenlearn is the quality lever
+
+### Quick start
+
+```sh
+cd distill
+
+# Install tokenlearn (one-time, adds ~200 MB deps)
+uv add tokenlearn
+
+# Featurize + train (100k texts ≈ 95s wall-clock on M4 Pro CPU)
+uv run python tokenlearn_train.py \
+    --teacher sentence-transformers/all-MiniLM-L6-v2 \
+    --corpus gooaq \
+    --n-texts 100000 \
+    --out ../target/distilled/tokenlearn-minilm \
+    --dims 256
+
+# Crosscheck ese parity
+uv run python crosscheck.py ../target/distilled/tokenlearn-minilm --dims 256
+
+# Measure NanoBEIR
+cd ../benches/py
+uv run python run_nanobeir_ese.py tokenlearn-minilm
+```
+
+### Corpus options
+
+| corpus | HF dataset | texts/s | content | notes |
+|---|---|---:|---|---|
+| `gooaq` | `sentence-transformers/gooaq` | ~11k/s | English QA pairs | fast to load; retrieval-relevant |
+| `wikitext` | `wikitext-103-raw-v1` | ~5k/s | Wikipedia prose | clean; general-purpose |
+| `c4` | `allenai/c4 en` | variable | web crawl | very large; stream-only |
+
+The corpus is the quality knob: 100k texts → 0.40 NanoBEIR; 1M+ (fineweb) → ~0.43+ (reference tier).
+
+### Compute notes
+
+- **Featurize**: ~2k sentences/s on CPU (MiniLM). 100k → ~45s.
+- **Train**: tokenlearn uses Adam + MSE + early stopping. On CPU: 100k train, 10k val → 1–5 epochs ≈ 30–60s.
+- **Total budget**: ~95s for 100k texts on M4 Pro CPU. GPU/MPS available but PyTorch 2.12 has MPS regressions — use `--device cpu` for now.
+
+### Artifact compatibility
+
+Tokenlearn produces the same `(tokenizer, embedding table, pooling)` triple as
+raw model2vec distillation. `distill.py --check` validates and auto-repairs:
+- Padding strategy repair: tokenlearn sets `Fixed:128` padding; repaired to `Fixed:0`.
+- Specials-id consistency: same repair as raw distill.
+
+The Rust crate (`src/`, `build.rs`) is **unchanged** — tokenlearn-trained
+artifacts compile through ese without modification.

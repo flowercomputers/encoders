@@ -398,7 +398,44 @@ def get_model_configs() -> dict[str, EseModelConfig]:
     except FileNotFoundError:
         print("WARNING: potion-multilingual-128M cache not found", file=sys.stderr)
 
-    # 4-7. Distilled models (in target/distilled/)
+    # 3b. potion-base-8M (plan 017 G1 — Tokenlearn'd English model)
+    #     WordPiece, dim=256, normalize=True, skip_unk=True
+    try:
+        potion8m_dir = _cache("minishlab-potion-base-8M")
+        configs["potion-base-8m"] = EseModelConfig(
+            key="potion-base-8m",
+            display_name="potion-base-8M",
+            artifact_dir=potion8m_dir,
+            dims=256,
+            normalize=True,
+            skip_unk=True,
+            add_special_tokens=False,
+            cargo_feature="dim-256",
+            family="ese/potion",
+        )
+    except FileNotFoundError:
+        print("WARNING: potion-base-8M cache not found", file=sys.stderr)
+
+    # 4. tokenlearn-minilm (plan 017 G3 — Tokenlearn-trained MiniLM distill)
+    #    WordPiece, dim=256, normalize=True, skip_unk=True
+    tl_minilm_dir = DISTILL_OUT / "tokenlearn-minilm"
+    if tl_minilm_dir.exists():
+        configs["tokenlearn-minilm"] = EseModelConfig(
+            key="tokenlearn-minilm",
+            display_name="tokenlearn-minilm (gooaq 100k)",
+            artifact_dir=tl_minilm_dir,
+            dims=256,
+            normalize=True,
+            skip_unk=True,
+            add_special_tokens=False,
+            cargo_feature="dim-256",
+            family="ese/tokenlearn",
+            teacher_model_id="sentence-transformers/all-MiniLM-L6-v2",
+        )
+    else:
+        print(f"INFO: tokenlearn-minilm not found at {tl_minilm_dir}", file=sys.stderr)
+
+    # 5-8. Distilled models (in target/distilled/)
     distill_models = [
         ("bge-base", "BAAI/bge-base-en-v1.5", "bge-base-en-v1.5", "ese/distill"),
         ("arctic-xs", "Snowflake/snowflake-arctic-embed-xs", "arctic-embed-xs", "ese/distill"),
