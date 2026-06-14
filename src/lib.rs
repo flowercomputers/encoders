@@ -1,3 +1,4 @@
+mod bpe;
 mod lookup;
 mod pretokenizer;
 #[allow(dead_code, unused_imports)]
@@ -25,9 +26,15 @@ pub const DIMENSIONS: usize = lookup::DIMENSIONS;
 pub const MODEL_NAME: &str = lookup::MODEL_NAME;
 
 /// IS_UNIGRAM is true when the compiled model uses the Unigram/SentencePiece tokenizer,
-/// and false for WordPiece models. Unigram models are typically case-sensitive.
+/// and false for WordPiece or BPE models. Unigram models are typically case-sensitive.
 #[allow(dead_code)]
 pub const IS_UNIGRAM: bool = lookup::IS_UNIGRAM;
+
+/// IS_BPE is true when the compiled model uses the BPE (Byte-Pair Encoding) tokenizer
+/// with the ByteLevel pre-tokenizer. This covers RoBERTa-family, GPT-2-derived, and
+/// most LLM-derived static embedding models.
+#[allow(dead_code)]
+pub const IS_BPE: bool = lookup::IS_BPE;
 
 /// Encodes a batch of texts into embedding vectors.
 ///
@@ -104,8 +111,8 @@ pub fn encode(
 /// # Examples
 ///
 /// ```
-/// // Only holds for uncased (WordPiece) models; Unigram models are case-sensitive.
-/// if !ese::IS_UNIGRAM {
+/// // Only holds for uncased (WordPiece) models; Unigram and BPE models are case-sensitive.
+/// if !ese::IS_UNIGRAM && !ese::IS_BPE {
 ///     let a = ese::encode_single("rustacean");
 ///     let b = ese::encode_single("Rustacean");
 ///     assert_eq!(a, b, "encoding is case-insensitive for the default (uncased) model");
@@ -120,9 +127,13 @@ pub fn encode(
 pub fn encode_single(input: impl AsRef<str>) -> [f32; DIMENSIONS] {
     let text = input.as_ref();
 
-    // Const dispatch: the compiler eliminates the dead arm at compile time.
+    // Const dispatch: the compiler eliminates dead arms at compile time.
+    // IS_BPE=true    → ByteLevel BPE path (src/bpe.rs).
     // IS_UNIGRAM=true → Unigram/Viterbi path (src/unigram.rs).
-    // IS_UNIGRAM=false → WordPiece path (unchanged from before).
+    // otherwise      → WordPiece path (unchanged from before).
+    if lookup::IS_BPE {
+        return bpe::encode_single(text);
+    }
     if lookup::IS_UNIGRAM {
         return unigram::encode_single(text);
     }

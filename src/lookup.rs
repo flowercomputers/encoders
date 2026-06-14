@@ -41,6 +41,13 @@ static SEEDS: &'static [u32; NUM_BUCKETS] = unsafe { std::mem::transmute(&ALIGNE
 #[allow(dead_code)]
 static SCORES_RAW: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/scores.bin"));
 
+// slot_ids.bin: [u32; TABLE_SIZE] — slot_ids[slot_idx] = vocab_id (original token index)
+// for occupied slots, u32::MAX for empty slots.
+// Only meaningful for BPE builds (IS_BPE=true). For WordPiece/Unigram builds this is a
+// 4-byte dummy file, and bpe.rs is dead code (IS_BPE=false elides it via const dispatch).
+#[allow(dead_code)]
+static SLOT_IDS_RAW: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/slot_ids.bin"));
+
 /// Look up a token and return a reference to the Slot (weight + per-row params).
 /// Returns None if the token is not in the vocabulary.
 #[inline(always)]
@@ -55,6 +62,44 @@ pub fn lookup_slot(key: &str) -> Option<&'static Slot> {
         } else {
             None
         }
+    }
+}
+
+/// Look up a token and return its PHF slot index.
+/// Returns None if the token is not in the vocabulary.
+/// Used by src/bpe.rs to retrieve the vocab_id from SLOT_IDS_RAW.
+#[allow(dead_code)]
+#[inline(always)]
+pub(crate) fn lookup_slot_index(key: &str) -> Option<usize> {
+    let bytes = key.as_bytes();
+    let bucket = (hash(bytes, 0) as usize) % NUM_BUCKETS;
+    unsafe {
+        let slot = (hash(bytes, *SEEDS.get_unchecked(bucket) as u64) as usize) & TABLE_MASK;
+        let entry = SLOTS.get_unchecked(slot);
+        if entry.verify == hash(bytes, u64::MAX) {
+            Some(slot)
+        } else {
+            None
+        }
+    }
+}
+
+/// Look up a token and return its vocab id (original token index in the model vocabulary).
+/// Returns None if the token is not in the vocabulary.
+/// Only meaningful for BPE builds (IS_BPE=true); for WordPiece/Unigram the slot_ids.bin is
+/// a dummy. Used by src/bpe.rs to map token strings to numeric ids for merge pair keying.
+#[allow(dead_code)]
+#[inline(always)]
+pub(crate) fn lookup_vocab_id(key: &str) -> Option<u32> {
+    let slot = lookup_slot_index(key)?;
+    unsafe {
+        let id_offset = slot * 4;
+        let id = u32::from_le_bytes(
+            SLOT_IDS_RAW[id_offset..id_offset + 4]
+                .try_into()
+                .unwrap_unchecked(),
+        );
+        Some(id)
     }
 }
 
