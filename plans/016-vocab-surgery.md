@@ -1,70 +1,99 @@
-# Plan 016: Vocab surgery + reweighting (layer E) — the lever past the static ceiling
+# Plan 016: Phase 3 — close the distillation-quality gap (reframed by plan 013 data)
 
-> **Status: BLOCKED on plan 013 (NanoBEIR table).** This is a design/spike
-> plan; its concrete targets come from where 013 shows ese loses quality.
-> Do NOT dispatch execution until 013 is DONE and the quality gaps are known.
+> **Status: DESIGN plan, now UNBLOCKED (plan 013 DONE).** Reframed
+> 2026-06-14 by the NanoBEIR measurements. Execution splits into gated
+> sub-plans (017+); this file fixes the priority and the targets.
 
 ## Status
 
-- **Priority**: P1 (the "most performant" axis of the stated aim)
-- **Effort**: L (multi-pass; each pass independent)
-- **Risk**: MED (changes compiled weights / pooling)
-- **Depends on**: 013 (quality baseline + gap analysis), 010 (distill harness)
-- **Category**: direction (RFC layer E)
-- **Planned at**: `8d9ede2`, 2026-06-14
+- **Priority**: P1 (the "most performant" axis — and now the clear #1 gap)
+- **Effort**: L (research-shaped; multiple tracks)
+- **Risk**: MED–HIGH (training/quality work, not mechanical)
+- **Depends on**: 013 (the quality map — DONE), 010 (distill harness)
+- **Category**: direction (RFC layer C quality + layer E)
+- **Planned at**: `8d9ede2`, reframed at `cd0ff9c`, 2026-06-14
 
-## Why this matters
+## What plan 013 measured (and why it reframes this plan)
 
-Speed is solved and class-leading; **quality** is the open frontier. Static
-embeddings are structurally word-order/negation-blind (~"87% of a transformer"
-per the user report). Because ese is literally a row table, vocab operations
-are cheap and mostly training-free — this is the lever to push the quality
-number up without abandoning the static paradigm. Sequenced after 013 so each
-pass is justified by a measured gap and verified by a measured gain on the
-same NanoBEIR harness.
+NanoBEIR mean nDCG@10, M4 Pro, via the validated `EseEncoder`
+(`benches/py/QUALITY_TABLE.md`):
 
-## The passes (each its own sub-plan once 013 lands)
+| model | NanoBEIR | note |
+|---|---|---|
+| static-retrieval-mrl-en-v1 (default) | **0.4957** | matches its model card → harness validated |
+| NIFE-mxbai (distilled+tuned) | 0.4685 | 108k vocab |
+| potion-multilingual-128M | 0.3699 | multilingual, 500k vocab |
+| **raw-distilled bge / arctic / MiniLM / e5** | **0.096–0.111** | **15–19% of teacher retention** |
+| (teachers bge / arctic / MiniLM) | 0.56–0.63 | transformer reference |
 
-- **E-prune** (S): drop vocab rows absent from a target corpus → smaller PHF
-  + binary, lossless in-domain. Pure win for embedded/edge deploys. Gate: a
-  pruned model scores identically on in-domain NanoBEIR with a smaller table.
-- **E-extend** (M): add domain whole-words / bigrams / phrases as new rows,
-  initialized by mean-pooling their subword decomposition (free) or one-shot
-  teacher distillation (NIFE-style). Directly attacks WordPiece/Unigram
-  fragmentation and the word-order weakness (a precomputed "new york" row
-  beats averaging "new" + "york"). Gate: measurable NanoBEIR lift on queries
-  with multiword entities, no regression elsewhere.
-- **E-reweight** (M): bake Zipf/IDF token weights into the pooling (a
-  per-row scalar consumed in `accumulate`/`pool_and_mean`) so common tokens
-  contribute less than rare ones — model2vec does this post-hoc; ese can bake
-  it. Gate: NanoBEIR lift vs naive mean at equal speed.
-- **E-binary** (M, optional): 1-bit/dim + Hamming distance as a retrieval
-  index tier, stacking on MRL truncation. Gate: retrieval recall vs storage
-  tradeoff curve.
+**The finding**: ese compiles faithfully (default 0.4957 ≈ card; distilled
+models ≡ model2vec at cosine 1.0). But **raw `model2vec.distill()` — what
+our `distill/` tool does today — retains only ~17% of the teacher's
+retrieval signal.** The high-quality static models (static-retrieval-mrl,
+potion) are not raw distillations; they were **contrastively
+trained/tuned** (Tom Aarsen's recipe; minishlab's Tokenlearn).
 
-## Design constraints (decided now, to keep later sub-plans on rails)
+**Consequence for priority**: vocab surgery (prune/extend/reweight) is
+*polish* — it cannot move a 0.10 model to 0.43. The order-of-magnitude lever
+is **distillation quality**. This plan now LEADS with that.
 
-- Each pass is an **optional, opt-in transform** (env flag or
-  `ESE_MODEL_DIR` artifact-side step), NEVER changing default behavior
-  silently — the plan-012 lesson.
-- Reweighting reuses the per-row params machinery from plan 009 (a row
-  scalar already flows through `accumulate`); do not invent a parallel one.
-- Every pass re-runs plan 013's `EseEncoder` NanoBEIR table and must show a
-  gain (or honest neutrality) — no pass ships on vibes.
-- Vocab-extend rows interact with the PHF construction and the specials/UNK
-  logic — extend is the riskiest; spike it first.
+## Track A (primary) — distillation quality: close 0.11 → ~0.43
 
-## Next action (when unblocked)
+The goal: make `distill/` produce models in the static-retrieval-mrl /
+potion quality tier, not raw-PCA tier. Two known recipes, both producing a
+`(tokenizer, table, pooling)` triple ese already compiles:
 
-After 013, read its `QUALITY_TABLE.md`, pick the 1–2 passes whose target gap
-is largest, and split each into its own gated execution plan (017+) modeled
-on the prior plans. Update this file with the chosen order and the measured
-baselines they must beat.
+- **A1 — model2vec Tokenlearn / contrastive post-training**: after the
+  initial distill, contrastively fine-tune the static table on a corpus
+  (model2vec ships this; minishlab's potion models use it). Likely the
+  cheapest path to the tier jump. Sub-plan gate: a Tokenlearn-tuned
+  distill of one teacher scores ≥ 0.35 NanoBEIR (vs 0.11 raw), compiles
+  through ese unchanged, crosscheck 1.0.
+- **A2 — contrastive-from-scratch** (the HF static-embeddings recipe, the
+  RFC's third provenance): train a StaticEmbedding with sentence-transformers
+  on a retrieval dataset, then compile. This is how static-retrieval-mrl
+  itself was made (0.4957). Heavier; the reference-quality ceiling.
 
-## STOP / open questions
+Sub-plan 017 = A1 (highest leverage, cheapest). 018 = A2 (if A1 underdelivers).
+Both reuse plan 013's `EseEncoder` NanoBEIR harness as the gate — no quality
+claim without a measured score.
 
-- Where does the quality actually leak (short queries? multiword entities?
-  multilingual?) — 013 answers this; without it, pass selection is guesswork.
-- Corpus dependence: prune/extend need a target corpus — is the use case
-  general (ship a broad vocab) or domain-specific (let users prune)? Product
-  decision to surface to the maintainer.
+## Track B (secondary) — vocab surgery (polish + the wasm-size lever)
+
+Worth doing AFTER Track A lands a quality baseline worth polishing, and
+independently valuable for **binary/wasm size** (plan 015 found the default
+wasm is 60 MB, weights-dominated):
+
+- **B1 — prune** (S): drop rows absent from a target corpus → smaller PHF +
+  binary, lossless in-domain. *This is the direct fix for the 60 MB wasm
+  bundle* — prune to a deployment vocab. Gate: same in-domain NanoBEIR,
+  smaller table + `.wasm`.
+- **B2 — extend** (M): phrase/bigram rows vs word-order blindness. Gate:
+  NanoBEIR lift on multiword-entity queries.
+- **B3 — reweight** (M): Zipf/IDF in pooling, reusing the per-row scalar
+  from plan 009. Gate: NanoBEIR lift vs naive mean at equal speed.
+
+## Design constraints (carried from the prior 12 plans)
+
+- Each transform is opt-in, never changing default behavior silently
+  (plan-012 lesson).
+- Every quality claim re-runs plan 013's NanoBEIR table — no pass ships on
+  vibes; the measured-gain bar is explicit.
+- Track A is where the strategic payoff is: it is the difference between
+  "ese compiles any model fast" (true today) and "ese turns any model into
+  a *hyper-performant* model" (the stated aim — currently only true for
+  already-well-trained inputs).
+
+## Next action
+
+Write sub-plan **017 (Track A1 — Tokenlearn/contrastive post-training in
+`distill/`)** as the next gated execution plan, targeting a measured jump
+from 0.11 → ≥ 0.35 NanoBEIR on one teacher. Track B follows or parallels for
+the wasm-size win.
+
+## Open questions (for the maintainer)
+
+- Corpus for A1/B1: general (ship broad quality) vs domain-specific (let
+  users tune)? A product decision.
+- Is reference-tier quality (A2, ~0.50) a goal, or is "good enough +
+  tiny+fast" (A1, ~0.35) the product? Determines A1-vs-A2 investment.
