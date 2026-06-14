@@ -263,11 +263,13 @@ def validate(out_dir: Path, repair: bool = False) -> None:
     # ── Check tokenizer ───────────────────────────────────────────────────────
     tk = json.loads(tokenizer_path.read_text())
     model_type = tk.get("model", {}).get("type", "unknown")
-    if model_type not in ("WordPiece", "Unigram"):
+    # Keep in sync with build.rs guard_tokenizer_family: ese compiles WordPiece,
+    # Unigram (SentencePiece), and BPE (ByteLevel) vocabulary models.
+    if model_type not in ("WordPiece", "Unigram", "BPE"):
         _fail(
-            f"model '{out_dir.name}' uses a '{model_type}' tokenizer; ese compiles WordPiece "
-            f"and Unigram (SentencePiece) models only — BPE, WordLevel, and other types are "
-            f"not supported (see docs/rfc-generalization.md)."
+            f"model '{out_dir.name}' uses a '{model_type}' tokenizer; ese compiles WordPiece, "
+            f"Unigram (SentencePiece), and BPE (ByteLevel) models only — WordLevel and other "
+            f"types are not supported (see docs/rfc-generalization.md)."
         )
     print(f"  tokenizer family: {model_type}  [OK]")
 
@@ -296,7 +298,8 @@ def validate(out_dir: Path, repair: bool = False) -> None:
 def _get_vocab_size(tk: dict) -> int:
     model = tk.get("model", {})
     model_type = model.get("type", "unknown")
-    if model_type == "WordPiece":
+    if model_type in ("WordPiece", "BPE"):
+        # Both store vocab as a {token: id} object.
         vocab = model.get("vocab", {})
         return len(vocab)
     elif model_type == "Unigram":

@@ -90,7 +90,15 @@ def encode_model2vec(artifact_dir: Path) -> np.ndarray:
     """
     from model2vec import StaticModel
     model = StaticModel.from_pretrained(str(artifact_dir))
-    # Encode one at a time: avoids batch-padding pollution in encode_batch_fast.
+    # Disable padding defensively: a Fixed:N padding strategy in the artifact's
+    # tokenizer.json makes model2vec pad EVERY sequence (even a single one) to N
+    # tokens, polluting the mean with pad-token rows. ese never pads, so the
+    # crosscheck must compare against unpadded model2vec output. (Encoding one at
+    # a time defeats BatchLongest but NOT Fixed:N — disable padding outright.)
+    try:
+        model.tokenizer.no_padding()
+    except Exception:
+        pass
     rows = [model.encode(s, show_progressbar=False) for s in SENTENCES]
     return np.array(rows, dtype=np.float32)
 

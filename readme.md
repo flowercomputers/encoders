@@ -305,9 +305,10 @@ but required for reproducible production builds.
 
 ### Supported tokenizer families
 
-`ese` compiles WordPiece and Unigram (SentencePiece) vocabulary models. The
-build script validates the tokenizer type and normalizer shapes at compile time
-and emits a clear error for unsupported families (BPE, etc.).
+`ese` compiles WordPiece, Unigram (SentencePiece), and BPE (ByteLevel)
+vocabulary models. The build script validates the tokenizer type and
+normalizer/pre-tokenizer shapes at compile time and emits a clear error for
+unsupported families (WordLevel, etc.).
 
 **WordPiece** models must use a `BertNormalizer` or compatible normalizer chain.
 The default model (`sentence-transformers/static-retrieval-mrl-en-v1`) is
@@ -322,7 +323,13 @@ WordPiece.
   `multilingual-e5-base`) after model2vec distillation.
 - `byte_fallback: false`.
 
-BPE and other tokenizer families are not yet supported — see
+**BPE** models must use a `ByteLevel` pre-tokenizer (the GPT-2/RoBERTa byte
+alphabet), `byte_fallback: false`, `ignore_merges: false`, and null dropout.
+This covers RoBERTa-family, GPT-2-derived, and ModernBERT/GTE models, both
+directly and as model2vec distillation targets (e.g.
+`sentence-transformers/all-distilroberta-v1`).
+
+WordLevel and other tokenizer families are not yet supported — see
 `docs/rfc-generalization.md`.
 
 ### Worked example: NIFE-mxbai-embed-large-v1 (WordPiece)
@@ -389,7 +396,7 @@ The distill tool mirrors `build.rs`'s own checks, surfacing problems as
 friendly Python errors before a cargo build ever runs:
 
 - Single F32 tensor named `embeddings` with shape `[vocab_size, dims]`.
-- Tokenizer family is WordPiece or Unigram — BPE is rejected with a clear message.
+- Tokenizer family is WordPiece, Unigram, or BPE — WordLevel/others rejected with a clear message.
 - Specials-id consistency: `post_processor.special_tokens[*].ids[0]` must match
   `model.vocab[token]` for `[CLS]` and `[SEP]`. model2vec's vocabulary compaction
   can leave the teacher's original ids here; the tool detects and repairs this
@@ -435,8 +442,8 @@ without loading an ML framework in the hot path.
 - The crate is currently a preview.
 - The default model is pinned to a specific commit SHA for reproducibility.
   Custom models require a pinned `@<revision>` for the same reason.
-- WordPiece and Unigram (SentencePiece) vocabulary models are supported.
-  BPE support is planned (see `docs/rfc-generalization.md`).
+- WordPiece, Unigram (SentencePiece), and BPE (ByteLevel) vocabulary models
+  are supported. WordLevel is planned (see `docs/rfc-generalization.md`).
 - The Python wrapper is preliminary and has less documentation than the Rust
   crate.
 - `ese` does not normalize vectors by default. If your search stack expects
@@ -476,9 +483,10 @@ change]** alter the embedding vectors a build produces.
 
 #### Added
 
-- **Compile any WordPiece or Unigram (SentencePiece) model at build time** via
-  `ESE_MODEL=<repo>@<revision>` or a local `ESE_MODEL_DIR`, with no source edits
-  — including XLM-R / multilingual models. See
+- **Compile any WordPiece, Unigram (SentencePiece), or BPE (ByteLevel) model
+  at build time** via `ESE_MODEL=<repo>@<revision>` or a local `ESE_MODEL_DIR`,
+  with no source edits — including XLM-R / multilingual and RoBERTa-family
+  models. See
   [Using a different model](#using-a-different-model).
 - **Distill any Hugging Face sentence-transformers teacher** into an ese model
   with the `distill/` tool, which validates and auto-repairs the artifacts. See
