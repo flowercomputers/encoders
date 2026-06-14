@@ -1,0 +1,27 @@
+[package]
+name = "ese-wasm"
+version = "0.1.0"
+edition = "2024"
+description = "WebAssembly bindings for ese — extremely static embeddings in the browser"
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+default = ["dim-512"]
+dim-1024 = ["ese_core/dim-1024"]
+dim-768 = ["ese_core/dim-768"]
+dim-512 = ["ese_core/dim-512"]
+dim-256 = ["ese_core/dim-256"]
+dim-128 = ["ese_core/dim-128"]
+dim-64 = ["ese_core/dim-64"]
+dim-32 = ["ese_core/dim-32"]
+quant-16 = ["ese_core/quant-16"]
+quant-8 = ["ese_core/quant-8"]
+
+[dependencies]
+ese_core = { package = "ese", path = "..", features = ["dim-512"] }
+wasm-bindgen = "0.2"
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = ["-O3", "--enable-mutable-globals"]

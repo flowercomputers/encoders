@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ese — WebAssembly embeddings demo</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      max-width: 720px;
+      margin: 2rem auto;
+      padding: 0 1rem;
+      color: #1a1a1a;
+      background: #fafafa;
+    }
+    h1 { font-size: 1.5rem; margin-bottom: 0.25rem; }
+    .subtitle { color: #666; font-size: 0.9rem; margin-bottom: 1.5rem; }
+    label { display: block; font-weight: 600; margin-bottom: 0.25rem; font-size: 0.9rem; }
+    textarea {
+      width: 100%;
+      padding: 0.75rem;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      font-size: 1rem;
+      font-family: inherit;
+      resize: vertical;
+      background: #fff;
+    }
+    textarea:focus { outline: none; border-color: #555; }
+    .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1rem; }
+    .result {
+      background: #fff;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      padding: 1.25rem;
+      margin-top: 1rem;
+    }
+    .similarity-bar-wrap { height: 8px; background: #eee; border-radius: 4px; overflow: hidden; margin: 0.5rem 0; }
+    .similarity-bar { height: 100%; border-radius: 4px; transition: width 0.2s, background 0.2s; }
+    .score { font-size: 2rem; font-weight: 700; }
+    .meta { font-size: 0.8rem; color: #888; margin-top: 0.5rem; }
+    #status { color: #888; font-size: 0.85rem; padding: 0.5rem 0; }
+    #status.ready { color: #2a7a2a; }
+    #status.error { color: #c00; }
+  </style>
+</head>
+<body>
+  <h1>ese — static embeddings in wasm</h1>
+  <p class="subtitle">CPU-only, no server, no model download. The model is compiled into the .wasm binary.</p>
+
+  <p id="status">Loading model…</p>
+
+  <div class="pair">
+    <div>
+      <label for="textA">Text A</label>
+      <textarea id="textA" rows="3" placeholder="Type something…">Cats are great pets and very independent animals.</textarea>
+    </div>
+    <div>
+      <label for="textB">Text B</label>
+      <textarea id="textB" rows="3" placeholder="Type something…">Dogs are loyal companions and love to play.</textarea>
+    </div>
+  </div>
+
+  <div class="result" id="result" hidden>
+    <div class="score" id="scoreText">—</div>
+    <div class="similarity-bar-wrap"><div class="similarity-bar" id="bar"></div></div>
+    <p style="color:#555; font-size:0.9rem;">cosine similarity</p>
+    <div class="meta" id="meta"></div>
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
