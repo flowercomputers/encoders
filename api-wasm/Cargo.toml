@@ -8,7 +8,7 @@ description = "WebAssembly bindings for ese — extremely static embeddings in t
 crate-type = ["cdylib"]
 
 [features]
-default = ["dim-512"]
+default = ["dim-128", "quant-8"]
 dim-1024 = ["ese_core/dim-1024"]
 dim-768 = ["ese_core/dim-768"]
 dim-512 = ["ese_core/dim-512"]
@@ -20,7 +20,7 @@ quant-16 = ["ese_core/quant-16"]
 quant-8 = ["ese_core/quant-8"]
 
 [dependencies]
-ese_core = { package = "ese", path = "..", features = ["dim-512"] }
+ese_core = { package = "ese", path = "..", default-features = false }
 wasm-bindgen = "0.2"
 
 [package.metadata.wasm-pack.profile.release]

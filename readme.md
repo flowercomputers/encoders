@@ -186,6 +186,56 @@ upstream model output.
 Quantization changes how the compiled weight table is stored in the binary. The
 public API still returns `f32` vectors.
 
+## WebAssembly
+
+`api-wasm/` contains WebAssembly bindings built with `wasm-pack`. The default
+build is `dim-128 + quant-8` — **4.6 MB raw, 4.2 MB gzipped** — a genuine
+browser payload (12× smaller than the unquantized baseline).
+
+### Bundle size
+
+The model is baked into the `.wasm` binary at build time. Size depends on the
+`dim-*` and `quant-8` features selected:
+
+| Variant | Raw | Gzipped | NanoBEIR nDCG@10 | Retention vs dim-512 |
+|---|---:|---:|---:|---:|
+| `dim-512` (f32, old default) | 60.2 MB | 55.9 MB | 0.4957 | 100% |
+| `dim-512,quant-8` | 15.8 MB | 14.7 MB | ~0.4957 | ~100% |
+| `dim-256,quant-8` | 8.3 MB | 7.7 MB | 0.4820 | 97.2% |
+| **`dim-128,quant-8` (default)** | **4.6 MB** | **4.2 MB** | **0.4624** | **93.3%** |
+| `dim-64,quant-8` | 2.7 MB | 2.4 MB | 0.4177 | 84.3% |
+
+quant-8's additional quality cost vs f32 at the same dim is ≤ 0.1% (plan 009
+`test_quantization_quality`); the size/quality tradeoff is dominated by dim
+choice.
+
+**Knee:** `dim-128,quant-8` is the recommended default — 93% retention at 13×
+the size reduction. Use `dim-256,quant-8` (97% retention, 8.3 MB) if the extra
+quality matters more than the extra 3.7 MB.
+
+### Build a different variant
+
+```console
+wasm-pack build api-wasm --target web -- --no-default-features --features "dim-256,quant-8"
+```
+
+Replace `dim-256,quant-8` with any combination from the table above.
+
+```console
+wasm-pack build api-wasm --target nodejs --out-dir pkg-node
+node api-wasm/crosscheck.mjs   # fidelity check: wasm vs native at cosine ≥ 0.9999
+```
+
+### Quick demo
+
+```js
+import init, { encode_single, dimensions } from './api-wasm/pkg/ese_wasm.js';
+await init();
+
+const dim = dimensions();          // 128 (default build)
+const vec = encode_single("hello world");  // Float32Array(128)
+```
+
 ## Quickstart: Python
 
 The Python API is preliminary. It wraps the Rust crate with PyO3 and returns
