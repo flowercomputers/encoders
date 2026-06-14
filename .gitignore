@@ -3,3 +3,7 @@
 **/**.tar**
 
 **/.DS_Store
+
+# tokenlearn: featurized vectors, corpus caches, trained model artifacts
+distill/out/
+benches/py/benchmarks/
