@@ -329,8 +329,7 @@ so you can compare `ours` against entries in `benches/py/models.txt`.
 `ese` selects the compiled model at build time via environment variables — no
 source edits required. The build script derives tokenizer facts (continuation
 prefix, output normalization) automatically from the model artifacts. Special
-tokens (`[CLS]`/`[SEP]`) are **not** pooled by default — verified in
-`spikes/specials-parity/` to produce a cosine of 1.0000 against the real
+tokens (`[CLS]`/`[SEP]`) are **not** pooled by default — verified to produce a cosine of 1.0000 against the real
 `SentenceTransformer.encode()` reference (specials-on was 0.9994). Set
 `ESE_ADD_SPECIAL_TOKENS=1` to opt in if your model explicitly requires it.
 
@@ -519,8 +518,7 @@ change]** alter the embedding vectors a build produces.
   reference exactly.** Two corrections landed: special tokens (`[CLS]`/`[SEP]`)
   are no longer pooled — the sentence-transformers and model2vec static
   references never insert them, and pooling content tokens only reproduces
-  `SentenceTransformer.encode()` at cosine 1.0000 (up from 0.9994; see
-  `spikes/specials-parity/`) — and the pooled mean now uses the exact reference
+  `SentenceTransformer.encode()` at cosine 1.0000 (up from 0.9994) — and the pooled mean now uses the exact reference
   token count (earlier builds scaled by a slightly different denominator,
   shifting magnitudes). **Re-embed any stored default-model vectors** for exact
   cosine or dot-product comparisons; semantic ranking is effectively unchanged
