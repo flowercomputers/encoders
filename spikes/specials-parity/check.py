@@ -198,6 +198,18 @@ def main():
     print("\n[verdict] whichever candidate has higher Q1 cosine AND smaller "
           "Q2 |S_ref - S| is the pooling ese SHOULD use for this model.")
 
+    # --- Post-fix gate (A1): S-matrix delta of the compiled ese binary vs reference ---
+    # After plan 012 (specials off by default), the binary should pool content tokens
+    # only, matching pooled_without. This block compares the *actual binary output*
+    # (not a numpy approximation) against the real ST reference.
+    print("\n[A1 post-fix] ese binary (dim-1024, default build) vs ST.encode reference:")
+    s_ese_bin = upper_tri_sim(ese_bin)
+    print(f"  mean|S_ref - S_ese_binary| = {np.abs(s_ref - s_ese_bin).mean():.5f}")
+    print(f"  corr(S_ref, S_ese_binary)  = {np.corrcoef(s_ref, s_ese_bin)[0,1]:.5f}")
+    q1_bin = per_row_cosine(ese_bin, ref)
+    print(f"  Q1 cosine (bin vs ref):      min={q1_bin.min():.4f} mean={q1_bin.mean():.4f}")
+    print(f"  (expect mean|S_ref-S_ese_binary| ~0.00000 after plan 012 flip)")
+
 
 if __name__ == "__main__":
     main()

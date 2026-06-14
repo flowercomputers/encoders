@@ -97,6 +97,10 @@ pub fn encode(
 /// When built with `ESE_SKIP_UNK=1`, UNK-id tokens are excluded from mean pooling,
 /// matching the behavior of `model2vec.StaticModel`; use this for distilled model2vec artifacts.
 ///
+/// Special tokens (`[CLS]`, `[SEP]`) are **not** pooled by default: the static-embedding
+/// references (sentence-transformers `StaticEmbedding` and model2vec) do not include them
+/// in the mean. Set `ESE_ADD_SPECIAL_TOKENS=1` at build time to opt in (rarely needed).
+///
 /// # Examples
 ///
 /// ```

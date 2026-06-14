@@ -54,6 +54,7 @@ fn resolve_model() -> ResolvedModel {
     println!("cargo:rerun-if-env-changed=ESE_TOKENIZER_FILE");
     println!("cargo:rerun-if-env-changed=ESE_NORMALIZE_OUTPUT");
     println!("cargo:rerun-if-env-changed=ESE_SKIP_UNK");
+    println!("cargo:rerun-if-env-changed=ESE_ADD_SPECIAL_TOKENS");
 
     // 1. ESE_MODEL_DIR: local directory, no download, no checksum
     if let Ok(dir_str) = env::var("ESE_MODEL_DIR") {
@@ -250,12 +251,27 @@ fn main() {
             model.name, unk_token
         ));
 
-    // ADD_SPECIAL_TOKENS: derived from post_processor
-    let add_special_tokens = derive_add_special_tokens(&tk, &model.name);
+    // ADD_SPECIAL_TOKENS: env-based opt-in, default false.
+    //
+    // Static-embedding references (sentence-transformers StaticEmbedding AND
+    // model2vec.StaticModel) do NOT pool special tokens: mean-pool of content
+    // tokens only reproduces SentenceTransformer.encode() at cosine 1.0000,
+    // while pooling WITH [CLS]/[SEP] lands at 0.9994 (S-matrix geometry error
+    // 0.00141 vs 0.00000). Verified in spikes/specials-parity; see also
+    // MinishLab/model2vec#335. Specials-off is therefore the correct default;
+    // set ESE_ADD_SPECIAL_TOKENS=1 only if you have a specific model that
+    // genuinely requires CLS/SEP in the pooled mean (rare).
+    let add_special_tokens = env::var("ESE_ADD_SPECIAL_TOKENS").map(|v| v == "1").unwrap_or(false);
+
+    // When the opt-in is set, cross-check that post_processor special_token ids
+    // match the vocab — meaningful only when specials are actually pooled.
+    if add_special_tokens {
+        cross_check_special_token_ids(&tk["post_processor"], Some(vocab), &model.name);
+    }
 
     let cls_id = if add_special_tokens {
         Some(special_token_id(vocab, "[CLS]").unwrap_or_else(|| panic!(
-            "model '{}' post_processor references CLS but '[CLS]' is missing from vocab",
+            "model '{}': ESE_ADD_SPECIAL_TOKENS=1 but '[CLS]' is missing from vocab",
             model.name
         )))
     } else {
@@ -263,7 +279,7 @@ fn main() {
     };
     let sep_id = if add_special_tokens {
         Some(special_token_id(vocab, "[SEP]").unwrap_or_else(|| panic!(
-            "model '{}' post_processor references SEP but '[SEP]' is missing from vocab",
+            "model '{}': ESE_ADD_SPECIAL_TOKENS=1 but '[SEP]' is missing from vocab",
             model.name
         )))
     } else {
@@ -756,16 +772,13 @@ fn build_unigram(
     }
     fs::write(out.join("verify.bin"), &verify_bin).unwrap();
 
-    // ── Derive ADD_SPECIAL_TOKENS (always false for Unigram models here) ──────
-    // The post_processor is TemplateProcessing with $A only — derive_add_special_tokens
-    // will return false because no SpecialToken{id:[CLS]/[SEP]} appears in the template.
-    // Re-use existing function for correctness.
-    // Note: derive_add_special_tokens reads tk["model"]["vocab"] as object — for Unigram
-    // we skip that cross-check path by providing an empty template (the function will
-    // return false because there are no [CLS]/[SEP] SpecialTokens in $A-only template).
-    let add_special_tokens = derive_add_special_tokens(tk, model_name);
+    // ── ADD_SPECIAL_TOKENS for Unigram models ────────────────────────────────
+    // Unigram (model2vec distilled) models never pool specials. The env opt-in
+    // is read here for consistency, but it is always false in practice and we
+    // guard against any accidental activation.
+    let add_special_tokens = env::var("ESE_ADD_SPECIAL_TOKENS").map(|v| v == "1").unwrap_or(false);
     // Guard: Unigram models must not add special tokens (the unk row is the only special)
-    assert!(!add_special_tokens, "Unigram model '{}' unexpectedly derived add_special_tokens=true; this should not happen for $A-only TemplateProcessing", model_name);
+    assert!(!add_special_tokens, "Unigram model '{}': ESE_ADD_SPECIAL_TOKENS=1 is not supported for Unigram models (specials are never pooled by model2vec artifacts)", model_name);
 
     // Emit the UNK embedding as the constant (used for UNK pooling).
     let unk_row = if unk_id < weights.len() { &weights[unk_id] } else { &zero_row };
@@ -1279,82 +1292,10 @@ fn check_normalizer(norm: &serde_json::Value, model_name: &str) {
     }
 }
 
-/// Derive ADD_SPECIAL_TOKENS from the tokenizer's post_processor section.
-///
-/// BertProcessing → true (always inserts CLS/SEP).
-/// TemplateProcessing → true only when the single or pair *template* references
-///   a SpecialToken with id "[CLS]" or "[SEP]". A special_tokens map entry that
-///   no template references does not get inserted at encode time, so the
-///   specials map alone is not a reliable signal.
-/// Absent post_processor or unrecognized type → false.
-///
-/// When the template references [CLS]/[SEP], also cross-checks that
-/// post_processor.special_tokens[*].ids[0] matches the vocabulary id for the
-/// same token. A mismatch (known for model2vec-compacted vocabs) means the
-/// reference tokenizer and ese would pool different rows — refused at compile
-/// time with a clear error.
-fn derive_add_special_tokens(tk: &serde_json::Value, model_name: &str) -> bool {
-    let pp = &tk["post_processor"];
-    if pp.is_null() || *pp == serde_json::Value::Null {
-        return false;
-    }
-    let vocab = tk["model"]["vocab"].as_object();
-    let pp_type = pp["type"].as_str().unwrap_or("");
-    match pp_type {
-        "BertProcessing" => {
-            // BertProcessing always adds CLS and SEP; cross-check ids if available
-            cross_check_special_token_ids(pp, vocab, model_name);
-            true
-        }
-        "TemplateProcessing" => {
-            // Determine CLS/SEP use from the template arrays only, not the specials map
-            let single = pp["single"].as_array();
-            let pair = pp["pair"].as_array();
-
-            let template_has_cls_sep = |arr: Option<&Vec<serde_json::Value>>| -> bool {
-                arr.map(|items| {
-                    items.iter().any(|item| {
-                        item.get("SpecialToken")
-                            .and_then(|st| st.get("id"))
-                            .and_then(|id| id.as_str())
-                            .map(|id| id == "[CLS]" || id == "[SEP]")
-                            .unwrap_or(false)
-                    })
-                }).unwrap_or(false)
-            };
-
-            let uses_cls_sep = template_has_cls_sep(single) || template_has_cls_sep(pair);
-            if uses_cls_sep {
-                cross_check_special_token_ids(pp, vocab, model_name);
-            }
-            uses_cls_sep
-        }
-        "RobertaProcessing" => {
-            // RobertaProcessing uses BOS/EOS, not CLS/SEP — treat as false
-            // (the guard step will catch mismatches at the normalizer level)
-            println!(
-                "cargo:warning=model '{}' has a RobertaProcessing post_processor; \
-                 ADD_SPECIAL_TOKENS will be false (CLS/SEP rows will be zero). \
-                 This may produce incorrect embeddings if the model expects BOS/EOS pooling.",
-                model_name
-            );
-            false
-        }
-        "" => false,
-        _ => {
-            println!(
-                "cargo:warning=model '{}' has an unrecognized post_processor type '{}'; \
-                 ADD_SPECIAL_TOKENS will be false.",
-                model_name, pp_type
-            );
-            false
-        }
-    }
-}
-
 /// Cross-check that post_processor.special_tokens[token].ids[0] matches
-/// vocab[token] for [CLS] and [SEP]. Panics on mismatch; skips when ids
-/// field is absent (template-by-name path is fine).
+/// vocab[token] for [CLS] and [SEP]. Called only under ESE_ADD_SPECIAL_TOKENS=1
+/// (meaningful only when specials are actually pooled). Panics on mismatch;
+/// skips when ids field is absent (template-by-name path is fine).
 fn cross_check_special_token_ids(
     pp: &serde_json::Value,
     vocab: Option<&serde_json::Map<String, serde_json::Value>>,

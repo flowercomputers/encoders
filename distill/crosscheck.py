@@ -203,6 +203,29 @@ def l2_normalize(x: np.ndarray) -> np.ndarray:
     return x / norms
 
 
+def upper_tri_sim(x: np.ndarray) -> np.ndarray:
+    """Upper-triangular entries of the pairwise cosine similarity matrix.
+
+    Mirror of spikes/specials-parity/check.py's upper_tri_sim — this is the
+    maintainer's retrieval-relevant metric (MinishLab/model2vec#335): differences
+    in the S-matrix capture reordering of neighbor similarities across the whole
+    corpus, not just individual pair cosines.
+    """
+    xn = l2_normalize(x)
+    S = xn @ xn.T
+    iu = np.triu_indices(S.shape[0], k=1)
+    return S[iu]
+
+
+def s_matrix_delta(a: np.ndarray, b: np.ndarray) -> tuple[float, float]:
+    """Return (mean|S_a - S_b|, corr(S_a, S_b)) for two embedding matrices."""
+    sa = upper_tri_sim(a)
+    sb = upper_tri_sim(b)
+    delta = float(np.abs(sa - sb).mean())
+    corr = float(np.corrcoef(sa, sb)[0, 1])
+    return delta, corr
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -253,6 +276,13 @@ def main() -> None:
     print("-" * 70)
     threshold_ok = min_cosine >= 0.999
     print(f"  min cosine = {min_cosine:.6f}  (threshold: 0.999)  {'PASS' if threshold_ok else 'FAIL'}")
+
+    # --- S-matrix delta (maintainer's retrieval-relevant metric) ---
+    s_delta, s_corr = s_matrix_delta(mv_embs, ese_embs)
+    print(f"\n[S-matrix] upper-triangular similarity matrix delta (model2vec vs ese):")
+    print(f"  mean|S_m2v - S_ese| = {s_delta:.5f}")
+    print(f"  corr(S_m2v, S_ese)  = {s_corr:.5f}")
+    print(f"  (0.00000 / 1.00000 = perfect geometry match)")
 
     # --- Semantic triplets on ese outputs ---
     print("\n[Semantic triplets on ese outputs]")
@@ -307,6 +337,7 @@ def main() -> None:
     # --- Summary ---
     print("\n=== SUMMARY ===")
     print(f"  min cosine (model2vec vs ese): {min_cosine:.6f}  {'PASS' if threshold_ok else 'FAIL'}")
+    print(f"  S-matrix delta:                {s_delta:.5f}  corr={s_corr:.5f}")
     print(f"  UNK tokens in test set:        {unk_count}")
     print(f"  semantic triplets:             {triplet_pass}/{len(TRIPLETS)}")
 
