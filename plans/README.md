@@ -28,6 +28,7 @@ Repo verification baseline (measured at `5155c13`): `cargo test` passes;
 | 006 | Manifest-driven model ingestion (ESE_MODEL env config) | P2 | M | 003, 004; design in 005 | DONE (merged at `0bfe5de`, 2026-06-12; reviewed; NIFE-mxbai compiles + passes parity via env config only) |
 | 007 | Reviewability cleanup (KISS pass: honest guards, dedup helpers, test indentation, doc/CI drift, specials-id cross-check) | P1 | M | 001-006 | DONE (merged at `d3c71c6`, 2026-06-12; reviewed; potion-base-8M now REJECTED at build with the id-inconsistency message — the silent-divergence class is closed) |
 | 009 | Layer-E part 1: per-row quantization + whole-word-UNK fidelity | P1 | M-L | 002, 007, 010 | DONE (merged at `cbdea1e`, 2026-06-12; reviewed; quant-8 quality 0.9408→0.999965 worst case with a prove-then-fix gate in history; B2 divergence 0.795 verified independently; follow-up: quant parity threshold can tighten 0.9999→0.99999 per measured minima) |
+| 012 | Specials off by default (match real static reference; unblocks potion-base-8M; S-matrix harness check) | P1 | M | 010 | TODO |
 | 011 | Unigram Sequence pre-tokenizer (XLM-R distills) + quant threshold tighten | P1 | M | 008, 009, 010 | DONE (merged at `4da83c7`, 2026-06-13; reviewed; paraphrase-multilingual AND multilingual-e5-base distill+compile at cross-language cosine 1.0; the 2/3-triplet result is the distilled model's own quality, reproduced identically by model2vec — recorded as a quality-tier data point) |
 | 010 | Distillation front-end (any HF teacher → ese artifacts; two-stage: tool + model basket) | P1 | L | 006, 008 | DONE (stage 1 merged `9d4aec8`, stage 2 merged `999acb4`, 2026-06-12; reviewed; basket: bge-base + arctic-embed-xs + all-MiniLM distill+compile+crosscheck at min cosine 1.0; XLM-R multilingual = clean fail on Sequence pre-tokenizer; BPE teacher rejected cleanly) |
 | 008 | Native Unigram runtime (Viterbi + Metaspace + compiled normalizer chain; acceptance: potion-multilingual-128M) | P1 | L | 007; RFC §4 | DONE (merged at `58d90c9`, 2026-06-12; reviewed; Viterbi semantics verified against vendored tokenizers source; one revision round: build-time MIN_SCORE const + restored doctest gated on new public `ese::IS_UNIGRAM`) |
@@ -57,8 +58,14 @@ REJECTED (with one-line rationale)
   are WordPiece** (v1 of plan 005 wrongly said Unigram);
   potion-multilingual-128M and multilingual-e5-base are Unigram. Plan 006's
   negative test was corrected accordingly.
-- 2026-06-12, found during 006 review (NEW small finding, fold into 007 or
-  a 006b mini-plan): potion-base-8M's published tokenizer.json is internally
+- 2026-06-13 UPDATE: the potion-base-8M rejection is being REVERSED by plan
+  012. model2vec maintainer (issue #335) confirmed static-embedding models
+  never pool special tokens; a verification spike proved ese's DEFAULT model
+  had the same latent bug (pooling CLS/SEP that the real ST reference omits,
+  S-matrix error 0.00141). Fix = specials-off by default, which makes the
+  inconsistent post-processor ids irrelevant → potion-base-8M compiles.
+  Original finding kept below for history.
+- 2026-06-12, found during 006 review: potion-base-8M's published tokenizer.json is internally
   inconsistent — model2vec compacted the vocab ([CLS]=2, [SEP]=3) but the
   TemplateProcessing post_processor still stores the teacher's ids 101/102,
   which in the compacted vocab are the tokens '×' and 'ß'. The reference
@@ -89,7 +96,7 @@ REJECTED (with one-line rationale)
   010-distill-frontend — NOW PLANNED (see row above);
   011 — NOW PLANNED (Sequence pre-tokenizer + threshold tighten; absorbs
   both recorded follow-ups);
-  012-emitters-wasm-and-packs (layer D) — NOT YET PLANNED.
+  013-emitters-wasm-and-packs (layer D) — NOT YET PLANNED.
   (Renumbered 2026-06-12 when 007 became the reviewability cleanup.)
 
 ## Follow-ups discovered during plan 010 review (not yet planned)
