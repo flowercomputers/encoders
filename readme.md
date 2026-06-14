@@ -411,54 +411,10 @@ ESE_MODEL_DIR=/path/to/my-model cargo build --features dim-256
 ```
 
 The directory must contain `model.safetensors` and `tokenizer.json`. This is
-the designated seam for the distillation pipeline described below: a Python
-canonicalization step emits a transformed artifact directory that `ese`
-consumes unchanged, with no Python in the pure-Rust consumer path.
+the designated seam for distillation tooling: a Python step can emit a
+transformed artifact directory that `ese` consumes unchanged, with no Python
+in the pure-Rust consumer path. (The distillation tool ships separately.)
 
-## Distilling a transformer into an ese model
-
-The `distill/` directory contains a small Python tool that turns any Hugging
-Face sentence-transformers teacher into an ese-compatible artifact directory,
-using [model2vec](https://github.com/MinishLab/model2vec) to distill a static
-token-embedding table.
-
-```sh
-cd distill
-uv run python distill.py BAAI/bge-base-en-v1.5 --out out/bge-base
-```
-
-This downloads the teacher model (~440 MB to your Hugging Face cache),
-distills it with PCA to 256 dimensions, writes `out/bge-base/` with
-`model.safetensors`, `tokenizer.json`, and `DISTILL_INFO.md`, then
-validates and auto-repairs the artifacts.
-
-After distillation, compile and test:
-
-```sh
-ESE_MODEL_DIR="$PWD/out/bge-base" ESE_NORMALIZE_OUTPUT=1 \
-  cargo test --features tests,dim-256
-```
-
-### Validation and repair
-
-The distill tool mirrors `build.rs`'s own checks, surfacing problems as
-friendly Python errors before a cargo build ever runs:
-
-- Single F32 tensor named `embeddings` with shape `[vocab_size, dims]`.
-- Tokenizer family is WordPiece, Unigram, or BPE — WordLevel/others rejected with a clear message.
-- Specials-id consistency: `post_processor.special_tokens[*].ids[0]` must match
-  `model.vocab[token]` for `[CLS]` and `[SEP]`. model2vec's vocabulary compaction
-  can leave the teacher's original ids here; the tool detects and repairs this
-  automatically, printing the repair.
-
-Run the validator standalone:
-
-```sh
-uv run python distill.py --check out/bge-base
-```
-
-See `distill/README.md` for full documentation including supported-family
-constraints and a pointer to the `build.rs` guards they mirror.
 
 ## How it works
 
@@ -536,9 +492,6 @@ change]** alter the embedding vectors a build produces.
   with no source edits — including XLM-R / multilingual and RoBERTa-family
   models. See
   [Using a different model](#using-a-different-model).
-- **Distill any Hugging Face sentence-transformers teacher** into an ese model
-  with the `distill/` tool, which validates and auto-repairs the artifacts. See
-  [Distilling a transformer into an ese model](#distilling-a-transformer-into-an-ese-model).
 - **Per-row weight quantization** for `quant-8` / `quant-16` — a large fidelity
   improvement on the shipped quantized wheel (worst-case quality vs the
   unquantized model went from 0.94 to 0.9999).
