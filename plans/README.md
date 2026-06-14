@@ -30,12 +30,16 @@ Repo verification baseline (measured at `5155c13`): `cargo test` passes;
 | 009 | Layer-E part 1: per-row quantization + whole-word-UNK fidelity | P1 | M-L | 002, 007, 010 | DONE (merged at `cbdea1e`, 2026-06-12; reviewed; quant-8 quality 0.9408→0.999965 worst case with a prove-then-fix gate in history; B2 divergence 0.795 verified independently; follow-up: quant parity threshold can tighten 0.9999→0.99999 per measured minima) |
 | 013 | Phase 1 — NanoBEIR quality-tier table (measure all compilable models) | P1 | M | 008,010,011,012 | TODO |
 | 014 | Phase 2a — BPE tokenizer support (RoBERTa/ModernBERT/GTE family) | P1 | L | 008,010,012 | TODO |
-| 015 | Phase 2b — WebAssembly target (in-browser, sub-ms) | P1 | M-L | core | TODO |
+| 015 | Phase 2b — WebAssembly target (in-browser, sub-ms) | P1 | M-L | core | DONE (merged at `a7668f5`, 2026-06-14; reviewed; wasm==native cosine 1.0 verified by me, ~110k emb/s in node; **also fixed a latent 32-bit PHF bug in src/lookup.rs**; ⚠️ .wasm is 60MB weights-dominated at dim-512 f32 — quant-8 + smaller dim + vocab prune (Phase 3) needed for a practical browser bundle) |
 | 016 | Phase 3 — Vocab surgery + reweighting (layer E quality) | P1 | L | 013 | BLOCKED (on 013 — needs the quality gap map) |
 | 012 | Specials off by default (match real static reference; unblocks potion-base-8M; S-matrix harness check) | P1 | M | 010 | DONE (merged at `452efa2`, 2026-06-13; reviewed; default S-matrix delta vs real ST 0.00141→0.00000 verified by me; potion-base-8M compiles; quant-16 quality threshold 0.999999→0.99999 verified benign at measured 0.9999989; **default output changed — re-embed stored default vectors**) |
 | 011 | Unigram Sequence pre-tokenizer (XLM-R distills) + quant threshold tighten | P1 | M | 008, 009, 010 | DONE (merged at `4da83c7`, 2026-06-13; reviewed; paraphrase-multilingual AND multilingual-e5-base distill+compile at cross-language cosine 1.0; the 2/3-triplet result is the distilled model's own quality, reproduced identically by model2vec — recorded as a quality-tier data point) |
 | 010 | Distillation front-end (any HF teacher → ese artifacts; two-stage: tool + model basket) | P1 | L | 006, 008 | DONE (stage 1 merged `9d4aec8`, stage 2 merged `999acb4`, 2026-06-12; reviewed; basket: bge-base + arctic-embed-xs + all-MiniLM distill+compile+crosscheck at min cosine 1.0; XLM-R multilingual = clean fail on Sequence pre-tokenizer; BPE teacher rejected cleanly) |
 | 008 | Native Unigram runtime (Viterbi + Metaspace + compiled normalizer chain; acceptance: potion-multilingual-128M) | P1 | L | 007; RFC §4 | DONE (merged at `58d90c9`, 2026-06-12; reviewed; Viterbi semantics verified against vendored tokenizers source; one revision round: build-time MIN_SCORE const + restored doctest gated on new public `ese::IS_UNIGRAM`) |
+| 017 | Benchmark re-validation — re-run on HEAD; fair int8/dim disclosure; honor normalize flag; restore bench.sh; add Unigram row (speed; complements 013's quality table) | P1 | M | none (gates master merge) | TODO |
+| 018 | Compile-time safety net — shape/finite/vocab-row guards; non-MRL truncation warning; verify-your-model docs; oracle bounds fix | P1 | M | none | TODO |
+| 019 | SIMD pooling accumulate — runtime-dispatched AVX2/NEON, bit-exact, scalar fallback (the missing raw-speed lever) | P1 | M | none (soft: 017) | TODO |
+| 020 | build.rs IR refactor — extract ModelIr; dedupe PHF/slot/codegen; behavior-preserving; de-risks 014 (BPE) + 016 (vocab surgery) | P2 | L | 018 | TODO |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale)
@@ -55,6 +59,64 @@ remaining direction work is phased:
   static ceiling. BLOCKED on 013 (targets the measured gaps).
 
 013/014/015 dispatched as parallel background sub-agents on 2026-06-14.
+
+## 2026-06-13 parallel assessment (plans 017–020) — speed leadership + safe generality
+
+A second advisor `improve` pass (run concurrently with the Phase 2 work above;
+HEAD `8a4616c`) assessed *how general* and *how fast* ese actually is, and added
+four complementary plans. They are numbered **017–020 to avoid colliding with the
+Phase 2 plans 013–016**, which were committed while this pass was running. Nothing
+in 013–016 was modified.
+
+Headline assessment:
+- The generalization work (001–012) is substantial: ese compiles any
+  WordPiece/Unigram model directly, plus any HF teacher via distillation.
+- **But it is all on `advisor/improvements`; `master` is still the original
+  single-model crate (~10.7k-line delta).** Shipping the generalized compiler is
+  the highest-leverage *non-code* decision outstanding.
+- The "world's fastest" claim is backed only by April benchmarks that predate the
+  rewrite and aren't apples-to-apples (int8 vs f32, dim mismatch, dropped
+  normalize flag, missing `bench.sh`).
+- Generality has a thin safety net: a new model can compile to silently-wrong
+  vectors (MRL-blind dim truncation `build.rs:1396`; no NaN/finite/vocab-row checks).
+
+The four plans:
+- **017** — benchmark re-validation (speed + fairness). Recommended **gate for
+  merging `advisor/improvements` → `master`**. Complements **013** (NanoBEIR
+  quality table): 017 measures speed, 013 measures quality — consider merging them.
+- **018** — compile-time safety net. Closes the "silent wrong embeddings on a new
+  model" class with always-on build-time guards (no test feature needed).
+- **019** — SIMD on the `accumulate` hot path (`src/wordpiece.rs:14`), fully scalar
+  today. Bit-exact, runtime-dispatched (no forced `-Ctarget-cpu=native`). The
+  single biggest raw-speed lever; pairs with **015** (wasm) for "fastest, anywhere."
+- **020** — extract a `ModelIr` and dedupe `build.rs`. Behavior-preserving.
+  **De-risks 014 (BPE) and 016 (vocab surgery)** — both add to `build.rs`; doing
+  them on the untangled IR is far cheaper. Consider sequencing 020 before them.
+
+Cross-track dependency: **020 depends on 018**. 017/018/019 are mutually
+independent; 019 soft-depends on 017 for before/after measurement.
+
+### Direction findings recorded (grounded options; not yet planned)
+
+- **Cased WordPiece** — `src/pretokenizer.rs:26` lowercases unconditionally;
+  `build.rs` rejects `BertNormalizer{lowercase:false}`. One compile-time flag
+  unlocks mpnet + cased BGE/E5; distill does NOT rescue it (re-tokenizes through
+  the same uncased runtime). Cheapest after 020; would also unblock E5 decase.
+- **SIF/IDF pooling (RFC E4)** — pooling is mean-only (grep-confirmed: no
+  `weighted`/`sif`/`idf` in `src/`+`build.rs`). Compile-time row reweight, zero
+  runtime cost; overlaps **016** (vocab surgery) — fold in there.
+- **WordLevel/GloVe** — `build.rs` rejects `WordLevel`; runtime is already a
+  token→row PHF + mean (a strict subset). Trivial after 020; promised in RFC §3.
+- **Binary/Hamming output (RFC §6/§7)** — runtime emits only f32 (grep-confirmed:
+  no `hamming`/`popcount`). 1-bit output (32× smaller, XOR+popcount) is the biggest
+  *end-to-end* lever; pairs with **015** (wasm) for tiny in-browser indexes.
+
+### Doc correction
+
+- `docs/rfc-generalization.md` §10.2 calls Precompiled-normalizer handling an open
+  question, but it is **already implemented** (`spm_precompiled` dep; `build.rs:646`
+  decode; `src/unigram.rs:124` apply; raw e5-base compiles at cosine 1.0 in
+  `distill/BASKET_RESULTS.md`). ese is more general than its own RFC states.
 
 ## Dependency notes
 
