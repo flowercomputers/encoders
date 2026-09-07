@@ -51,5 +51,15 @@ parquet = { version = "58" }
 minreq = { version = "2", features = ["https-native"] }
 
 [[bench]]
+name = "bench_encode"
+harness = false
+
+[[bench]]
 name = "gooaq"
 harness = false
+
+# Compares ese output against the model2vec-rs reference implementation.
+# Run with: cargo test --features model-potion-code-16m-v2 --test m2v_parity
+[[test]]
+name = "m2v_parity"
+required-features = ["model-potion-code-16m-v2"]

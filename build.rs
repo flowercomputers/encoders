@@ -184,21 +184,6 @@ fn main() {
         }
     }
 
-    // compute global min/max for quantization
-    let (global_min, global_max) = if cfg!(feature = "quant-8") || cfg!(feature = "quant-16") {
-        let mut mn = f32::INFINITY;
-        let mut mx = f32::NEG_INFINITY;
-        for row in &weights {
-            for &v in row {
-                mn = mn.min(v);
-                mx = mx.max(v);
-            }
-        }
-        (mn, mx)
-    } else {
-        (0.0, 1.0) // unused
-    };
-
     let quant_max = if cfg!(feature = "quant-8") {
         255.0
     } else if cfg!(feature = "quant-16") {
@@ -207,16 +192,13 @@ fn main() {
         1.0
     };
 
-    let quant_scale = if (global_max - global_min).abs() < f32::EPSILON {
-        1.0
-    } else {
-        (global_max - global_min) / quant_max
-    };
-
-    // reorder weights into PHF slot with verify hash prepended
-    // && zero-fill empty slots
+    // reorder weights into PHF slots (verify hash, per-row quantization
+    // min/scale, row data) && zero-fill empty slots. Rows are quantized
+    // independently: embedding rows vary hugely in magnitude (model2vec
+    // bakes SIF weights into the vectors), so a global scale crushes
+    // small rows.
     let zero_row = vec![0.0f32; dims as usize];
-    let slot_size = 8 + dims as usize * dtype_sz();
+    let slot_size = 16 + dims as usize * dtype_sz();
     let mut phf_slots: Vec<u8> = Vec::with_capacity(table_size * slot_size);
     for slot in 0..table_size {
         phf_slots.extend_from_slice(&verify[slot].to_le_bytes());
@@ -225,7 +207,14 @@ fn main() {
         } else {
             &zero_row
         };
-        phf_slots.extend_from_slice(&quantize_f32_to_bytes(row, global_min, quant_scale));
+        let (row_min, row_scale) = if cfg!(feature = "quant-8") || cfg!(feature = "quant-16") {
+            row_min_scale(row, quant_max)
+        } else {
+            (0.0, 1.0)
+        };
+        phf_slots.extend_from_slice(&row_min.to_le_bytes());
+        phf_slots.extend_from_slice(&row_scale.to_le_bytes());
+        phf_slots.extend_from_slice(&quantize_f32_to_bytes(row, row_min, row_scale));
     }
     fs::write(out.join("weights.bin"), &phf_slots).unwrap();
 
@@ -243,9 +232,10 @@ fn main() {
     }
     fs::write(out.join("verify.bin"), &verify_bin).unwrap();
 
-    let unk_str = format_quantized_param(&unk, global_min, quant_scale);
-    let cls_str = format_quantized_param(&cls, global_min, quant_scale);
-    let sep_str = format_quantized_param(&sep, global_min, quant_scale);
+    // only three special vectors, so they are stored as exact f32
+    let unk_str = format!("{unk:?}");
+    let cls_str = format!("{cls:?}");
+    let sep_str = format!("{sep:?}");
 
     let dtype_sz = dtype_sz();
 
@@ -274,21 +264,16 @@ pub type Param = [{dtype}; DIMENSIONS];\n\
 pub const TABLE_SIZE: usize = {table_size};\n\
 pub const TABLE_MASK: usize = {table_mask};\n\
 pub const NUM_BUCKETS: usize = {num_buckets};\n\
-pub const SLOT_SIZE: usize = 8 + DIMENSIONS * DTYPE_SIZE;\n\
-pub const UNK: Param = {unk_str};\n\
-pub const CLS: Param = {cls_str};\n\
-pub const SEP: Param = {sep_str};\n\
+pub const SLOT_SIZE: usize = 16 + DIMENSIONS * DTYPE_SIZE;\n\
+pub const UNK: [f32; DIMENSIONS] = {unk_str};\n\
+pub const CLS: [f32; DIMENSIONS] = {cls_str};\n\
+pub const SEP: [f32; DIMENSIONS] = {sep_str};\n\
 pub const MAX_WORD_LEN: usize = {max_word_len};\n\
 pub const DTYPE_SIZE: usize = {dtype_sz};\n\
-pub const QUANT_MIN: f32 = {global_min:?};\n\
-pub const QUANT_SCALE: f32 = {quant_scale:?};\n\
 pub const HAS_BOS_EOS: bool = {has_bos_eos};\n\
 pub const CONTINUING_PREFIX: &str = {continuing_prefix:?};\n\
-#[allow(dead_code)]\n\
 pub const DROP_UNK: bool = {drop_unk};\n\
-#[allow(dead_code)]\n\
 pub const L2_NORMALIZE: bool = {l2_normalize};\n\
-#[allow(dead_code)]\n\
 pub const MAX_TOKENS: usize = {max_tokens};\n\
 ",
         ),
@@ -296,7 +281,16 @@ pub const MAX_TOKENS: usize = {max_tokens};\n\
     .unwrap();
 
     #[cfg(feature = "tests")]
-    generate_testdata(&out, &weights, dims as usize, tokenizer_path);
+    generate_testdata(
+        &out,
+        &weights,
+        dims as usize,
+        tokenizer_path,
+        info.unk_id,
+        drop_unk,
+        l2_normalize,
+        max_tokens as usize,
+    );
 }
 
 fn tokenizer_info(tk: &serde_json::Value) -> TokenizerInfo {
@@ -554,21 +548,17 @@ fn quantize_f32_to_bytes(values: &[f32], min: f32, scale: f32) -> Vec<u8> {
     }
 }
 
-fn format_quantized_param(values: &[f32], min: f32, scale: f32) -> String {
-    if cfg!(feature = "quant-8") {
-        let q: Vec<u8> = values
-            .iter()
-            .map(|&v| ((v - min) / scale).round() as u8)
-            .collect();
-        format!("{q:?}")
-    } else if cfg!(feature = "quant-16") {
-        let q: Vec<u16> = values
-            .iter()
-            .map(|&v| ((v - min) / scale).round() as u16)
-            .collect();
-        format!("{q:?}")
+fn row_min_scale(row: &[f32], quant_max: f32) -> (f32, f32) {
+    let mut mn = f32::INFINITY;
+    let mut mx = f32::NEG_INFINITY;
+    for &v in row {
+        mn = mn.min(v);
+        mx = mx.max(v);
+    }
+    if !mn.is_finite() || !mx.is_finite() || (mx - mn).abs() < f32::EPSILON {
+        (if mn.is_finite() { mn } else { 0.0 }, 1.0)
     } else {
-        format!("{values:?}")
+        (mn, (mx - mn) / quant_max)
     }
 }
 
@@ -634,40 +624,58 @@ fn shared_model_dir(out: &Path) -> PathBuf {
 }
 
 #[cfg(feature = "tests")]
-fn generate_testdata(out: &Path, weights: &[Vec<f32>], _dims: usize, tokenizer_path: &PathBuf) {
+fn generate_testdata(
+    out: &Path,
+    weights: &[Vec<f32>],
+    _dims: usize,
+    tokenizer_path: &PathBuf,
+    unk_id: usize,
+    drop_unk: bool,
+    l2_normalize: bool,
+    max_tokens: usize,
+) {
     let tokenizer =
         tokenizers::Tokenizer::from_file(tokenizer_path).expect("failed to load tokenizer");
 
-    let inputs: Vec<&str> = vec![
-        "Hello world",
-        "The quick brown fox jumps over the lazy dog",
-        "",
-        "   ",
-        "café résumé naïve",
-        "你好世界",
-        "Hello, world! How are you?",
-        "UPPER CASE text",
-        "multiple   spaces   between",
-        "a]b[c{d}e",
-        "\x00\x01\x02\x03",
-        "def snake_case_fn(arg_one, arg_two):",
-        "const camelCaseValue = getParameterTypes();",
+    let inputs: Vec<String> = vec![
+        "Hello world".into(),
+        "The quick brown fox jumps over the lazy dog".into(),
+        "".into(),
+        "   ".into(),
+        "café résumé naïve".into(),
+        "你好世界".into(),
+        "Hello, world! How are you?".into(),
+        "UPPER CASE text".into(),
+        "multiple   spaces   between".into(),
+        "a]b[c{d}e".into(),
+        "\x00\x01\x02\x03".into(),
+        "def snake_case_fn(arg_one, arg_two):".into(),
+        "const camelCaseValue = getParameterTypes();".into(),
+        "unknown \u{2603}\u{1F980} pieces mixed with words".into(),
+        "long input ".repeat(400),
     ];
 
     let mut code = String::from("const TEST_INPUTS: &[&str] = &[\n");
     let mut outputs: Vec<Vec<f32>> = Vec::new();
 
-    for &input in &inputs {
+    for input in &inputs {
         code.push_str(&format!("    {:?},\n", input));
-        let tokens = tokenizer.encode(input, true).unwrap();
-        let token_ids = tokens.get_ids();
+        let tokens = tokenizer.encode(input.as_str(), true).unwrap();
+        // mirror model2vec inference: drop UNK ids, then truncate
+        let mut token_ids: Vec<u32> = tokens.get_ids().to_vec();
+        if drop_unk {
+            token_ids.retain(|&id| id as usize != unk_id);
+        }
+        if max_tokens > 0 && token_ids.len() > max_tokens {
+            token_ids.truncate(max_tokens);
+        }
         let scale = if token_ids.is_empty() {
             1.0
         } else {
             1.0 / token_ids.len() as f32
         };
         let mut vector = vec![0.0f32; _dims];
-        for &tok_id in token_ids {
+        for &tok_id in &token_ids {
             for (v, &w) in vector
                 .iter_mut()
                 .zip(unsafe { weights.get_unchecked(tok_id as usize) }.iter())
@@ -677,6 +685,12 @@ fn generate_testdata(out: &Path, weights: &[Vec<f32>], _dims: usize, tokenizer_p
         }
         for v in vector.iter_mut() {
             *v *= scale
+        }
+        if l2_normalize {
+            let norm = vector.iter().map(|v| v * v).sum::<f32>().sqrt() + 1e-32;
+            for v in vector.iter_mut() {
+                *v /= norm;
+            }
         }
 
         outputs.push(vector);

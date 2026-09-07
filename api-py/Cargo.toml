@@ -7,6 +7,10 @@ edition = "2024"
 name = "ese"
 crate-type = ["cdylib"]
 
+[features]
+# Forwarded model selection, e.g.: maturin build --features model-potion-code-16m-v2
+model-potion-code-16m-v2 = ["ese_core/model-potion-code-16m-v2"]
+
 [dependencies]
 ese_core = { package = "ese", path = "..", features = ["rayon", "dim-512", "quant-8"] }
 numpy = "0.28.0"

@@ -91,11 +91,20 @@ pub fn encode_single(input: impl AsRef<str>) -> [f32; DIMENSIONS] {
         wordpiece::accumulate(&mut vector, &lookup::CLS);
     }
     let mut token_count = 0;
+    let mut produced = 0;
     let mut normalized = String::with_capacity(text.len());
     pretokenizer::normalize_into(text, &mut normalized);
     let mut wp_buf = String::with_capacity(64);
+    let mut piece_buf: Vec<&'static lookup::Slot> = Vec::with_capacity(16);
     pretokenizer::for_each_pre_token(&normalized, |token| {
-        wordpiece::wordpiece_accumulate(token, &mut vector, &mut token_count, &mut wp_buf);
+        wordpiece::wordpiece_accumulate(
+            token,
+            &mut vector,
+            &mut token_count,
+            &mut produced,
+            &mut wp_buf,
+            &mut piece_buf,
+        );
     });
     let scale = if token_count != 0 {
         1.0 / token_count as f32
@@ -111,6 +120,12 @@ pub fn encode_single(input: impl AsRef<str>) -> [f32; DIMENSIONS] {
     } else {
         for v in vector.iter_mut() {
             *v *= scale;
+        }
+    }
+    if lookup::L2_NORMALIZE {
+        let norm = vector.iter().map(|v| v * v).sum::<f32>().sqrt() + 1e-32;
+        for v in vector.iter_mut() {
+            *v /= norm;
         }
     }
     vector

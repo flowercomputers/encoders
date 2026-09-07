@@ -74,14 +74,26 @@ mod optional {
         dot / (na * nb)
     }
 
+    /// Quantized builds compare lossy runtime output against the f32 reference.
+    fn threshold() -> f32 {
+        if cfg!(feature = "quant-8") {
+            0.9995
+        } else if cfg!(feature = "quant-16") {
+            0.99999
+        } else {
+            0.999999
+        }
+    }
+
     #[test]
     fn test_embeddings_match() {
         let embeddings = crate::encode(TEST_INPUTS);
         for (i, (want, got)) in TEST_OUTPUTS.iter().zip(embeddings.iter()).enumerate() {
             let sim = cosine_similarity(want, got);
             assert!(
-                sim > 0.999999,
-                "cosine similarity for {i} below threshold: {sim}"
+                sim > threshold(),
+                "cosine similarity for {i} below threshold {}: {sim}",
+                threshold()
             );
         }
     }

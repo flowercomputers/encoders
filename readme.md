@@ -22,6 +22,8 @@ By default this crate provides an unquantized model truncated to 512 dimensions.
 #### Model selection
 By default the crate compiles [`sentence-transformers/static-retrieval-mrl-en-v1`](https://huggingface.co/sentence-transformers/static-retrieval-mrl-en-v1). Enable the `model-potion-code-16m-v2` feature to compile [`minishlab/potion-code-16M-v2`](https://huggingface.co/minishlab/potion-code-16M-v2), a code-retrieval model2vec model, instead (it is 256-dimensional natively, so `dim-*` features above 256 have no effect).
 
+For model2vec models, ese reproduces the reference inference semantics exactly (UNK tokens dropped before pooling, 512-token truncation, L2-normalized output; cosine = 1.0 against `model2vec-rs`, see `tests/m2v_parity.rs`). One deliberate difference: ese encodes each input independently, so results never depend on what else is in the batch — the reference implementations pool `[PAD]` tokens into shorter sequences when batching, ese matches their single-input output.
+
 You can also point the build at any local model directory containing a `model.safetensors` and `tokenizer.json` (plus an optional model2vec `config.json`) with the `ESE_MODEL_DIR` environment variable. Only BERT-style WordPiece tokenizers are supported; the build fails with an explanatory error for anything else (e.g. Unigram-based models like `potion-multilingual-128M`).
 
 Note: the `dim-*` truncation is only principled for Matryoshka-trained models like the default one; for other models it just clamps to the model's native dimensionality.
