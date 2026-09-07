@@ -19,6 +19,9 @@ members = [
 
 [features]
 default = ["dim-512"]
+# Model selection: with no model-* feature set, builds
+# sentence-transformers/static-retrieval-mrl-en-v1.
+model-potion-code-16m-v2 = []
 dim-1024 = []
 dim-768 = []
 dim-512 = []

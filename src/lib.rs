@@ -87,7 +87,9 @@ pub fn encode(
 pub fn encode_single(input: impl AsRef<str>) -> [f32; DIMENSIONS] {
     let text = input.as_ref();
     let mut vector = [0.0f32; DIMENSIONS];
-    wordpiece::accumulate(&mut vector, &lookup::CLS);
+    if lookup::HAS_BOS_EOS {
+        wordpiece::accumulate(&mut vector, &lookup::CLS);
+    }
     let mut token_count = 0;
     let mut normalized = String::with_capacity(text.len());
     pretokenizer::normalize_into(text, &mut normalized);
@@ -100,10 +102,16 @@ pub fn encode_single(input: impl AsRef<str>) -> [f32; DIMENSIONS] {
     } else {
         1.0
     };
-    let mut sep = [0.0f32; DIMENSIONS];
-    wordpiece::accumulate(&mut sep, &lookup::SEP);
-    for (v, s) in vector.iter_mut().zip(sep.iter()) {
-        *v = (*v + *s) * scale;
+    if lookup::HAS_BOS_EOS {
+        let mut sep = [0.0f32; DIMENSIONS];
+        wordpiece::accumulate(&mut sep, &lookup::SEP);
+        for (v, s) in vector.iter_mut().zip(sep.iter()) {
+            *v = (*v + *s) * scale;
+        }
+    } else {
+        for v in vector.iter_mut() {
+            *v *= scale;
+        }
     }
     vector
 }

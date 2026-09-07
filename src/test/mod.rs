@@ -67,6 +67,10 @@ mod optional {
         let dot: f32 = a.iter().zip(b).map(|(x, y)| x * y).sum();
         let na: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
         let nb: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+        // models without special tokens embed empty input as the zero vector
+        if na == 0.0 && nb == 0.0 {
+            return 1.0;
+        }
         dot / (na * nb)
     }
 

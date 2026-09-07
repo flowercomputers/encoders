@@ -5,21 +5,80 @@ use std::{
     path::{Path, PathBuf},
 };
 
-static MODEL_URL: &'static str = "https://huggingface.co/sentence-transformers/static-retrieval-mrl-en-v1/resolve/main/0_StaticEmbedding/model.safetensors";
-static TOKENIZER_URL: &'static str = "https://huggingface.co/sentence-transformers/static-retrieval-mrl-en-v1/resolve/main/0_StaticEmbedding/tokenizer.json";
+/// Where to fetch a model from, and what it's called on disk.
+struct ModelSpec {
+    slug: &'static str,
+    model_url: &'static str,
+    tokenizer_url: &'static str,
+    /// model2vec repos carry a small config.json (normalize, max_length, ...)
+    config_url: Option<&'static str>,
+}
+
+fn model_spec() -> ModelSpec {
+    if cfg!(feature = "model-potion-code-16m-v2") {
+        ModelSpec {
+            slug: "potion-code-16M-v2",
+            model_url:
+                "https://huggingface.co/minishlab/potion-code-16M-v2/resolve/main/model.safetensors",
+            tokenizer_url:
+                "https://huggingface.co/minishlab/potion-code-16M-v2/resolve/main/tokenizer.json",
+            config_url: Some(
+                "https://huggingface.co/minishlab/potion-code-16M-v2/resolve/main/config.json",
+            ),
+        }
+    } else {
+        ModelSpec {
+            slug: "static-retrieval-mrl-en-v1",
+            model_url: "https://huggingface.co/sentence-transformers/static-retrieval-mrl-en-v1/resolve/main/0_StaticEmbedding/model.safetensors",
+            tokenizer_url: "https://huggingface.co/sentence-transformers/static-retrieval-mrl-en-v1/resolve/main/0_StaticEmbedding/tokenizer.json",
+            config_url: None,
+        }
+    }
+}
+
+/// Facts derived from tokenizer.json. The runtime pipeline is a fixed
+/// BertNormalizer + BertPreTokenizer + WordPiece implementation, so anything
+/// else is rejected at build time.
+struct TokenizerInfo {
+    unk_id: usize,
+    cls_id: Option<usize>,
+    sep_id: Option<usize>,
+    continuing_prefix: String,
+    max_word_len: u64,
+}
+
+/// Inference-relevant fields of a model2vec config.json.
+struct ModelConfig {
+    is_model2vec: bool,
+    normalize: bool,
+    max_length: Option<u64>,
+}
 
 fn main() {
     let out = Path::new(&env::var("OUT_DIR").unwrap()).to_path_buf();
 
     let dtype = dtype();
 
-    let model_dir = shared_model_dir(&out);
+    let spec = model_spec();
+    println!("cargo:rerun-if-env-changed=ESE_MODEL_DIR");
+    let model_dir = match env::var("ESE_MODEL_DIR") {
+        Ok(dir) => PathBuf::from(dir),
+        Err(_) => {
+            let dir = shared_model_dir(&out).join(spec.slug);
+            fs::create_dir_all(&dir).unwrap();
+            download_if_missing(&dir.join("model.safetensors"), spec.model_url);
+            download_if_missing(&dir.join("tokenizer.json"), spec.tokenizer_url);
+            if let Some(url) = spec.config_url {
+                download_if_missing(&dir.join("config.json"), url);
+            }
+            dir
+        }
+    };
     let model_path = &model_dir.join("model.safetensors");
     let tokenizer_path = &model_dir.join("tokenizer.json");
 
-    download_if_missing(model_path, MODEL_URL);
-    download_if_missing(tokenizer_path, TOKENIZER_URL);
     let (weights, dims) = parse_safetensors(model_path);
+    let config = read_model_config(&model_dir.join("config.json"));
 
     println!(
         "cargo:rerun-if-changed={}",
@@ -27,13 +86,15 @@ fn main() {
     );
     let tokenizer_data = fs::read_to_string(tokenizer_path).expect("failed to read tokenizer file");
     let tk: serde_json::Value = serde_json::from_str(tokenizer_data.as_str()).unwrap();
+    let info = tokenizer_info(&tk);
     let vocab = tk["model"]["vocab"]
         .as_object()
         .expect("missing model.vocab");
 
-    let mut unk: Vec<f32> = Default::default();
-    let mut cls: Vec<f32> = Default::default();
-    let mut sep: Vec<f32> = Default::default();
+    let mut unk: Vec<f32> = vec![0.0; dims as usize];
+    let mut cls: Vec<f32> = vec![0.0; dims as usize];
+    let mut sep: Vec<f32> = vec![0.0; dims as usize];
+    let mut found_unk = false;
 
     // Collect (token, weight_index) pairs
     let mut entries: Vec<(String, usize)> = Vec::new();
@@ -43,13 +104,22 @@ fn main() {
             continue;
         }
         entries.push((token.clone(), i));
-        match i {
-            100 => unk = weights[i].clone(),
-            101 => cls = weights[i].clone(),
-            102 => sep = weights[i].clone(),
-            _ => {}
+        if i == info.unk_id {
+            unk = weights[i].clone();
+            found_unk = true;
+        }
+        if Some(i) == info.cls_id {
+            cls = weights[i].clone();
+        }
+        if Some(i) == info.sep_id {
+            sep = weights[i].clone();
         }
     }
+    assert!(
+        found_unk,
+        "unk token id {} not found in embedding table",
+        info.unk_id
+    );
 
     // hash table
     let vocab_size = entries.len();
@@ -179,6 +249,21 @@ fn main() {
 
     let dtype_sz = dtype_sz();
 
+    let has_bos_eos = info.cls_id.is_some() && info.sep_id.is_some();
+    let continuing_prefix = &info.continuing_prefix;
+    let max_word_len = info.max_word_len;
+    let drop_unk = config.is_model2vec;
+    let l2_normalize = config.normalize;
+    // 0 = unlimited. model2vec truncates to max_length tokens (default 512).
+    let max_tokens = if config.is_model2vec {
+        config
+            .max_length
+            .or_else(|| tk["truncation"]["max_length"].as_u64())
+            .unwrap_or(512)
+    } else {
+        0
+    };
+
     // emit constants
     fs::write(
         out.join("model_constants.rs"),
@@ -193,10 +278,18 @@ pub const SLOT_SIZE: usize = 8 + DIMENSIONS * DTYPE_SIZE;\n\
 pub const UNK: Param = {unk_str};\n\
 pub const CLS: Param = {cls_str};\n\
 pub const SEP: Param = {sep_str};\n\
-pub const MAX_WORD_LEN: usize = 100;\n\
+pub const MAX_WORD_LEN: usize = {max_word_len};\n\
 pub const DTYPE_SIZE: usize = {dtype_sz};\n\
 pub const QUANT_MIN: f32 = {global_min:?};\n\
 pub const QUANT_SCALE: f32 = {quant_scale:?};\n\
+pub const HAS_BOS_EOS: bool = {has_bos_eos};\n\
+pub const CONTINUING_PREFIX: &str = {continuing_prefix:?};\n\
+#[allow(dead_code)]\n\
+pub const DROP_UNK: bool = {drop_unk};\n\
+#[allow(dead_code)]\n\
+pub const L2_NORMALIZE: bool = {l2_normalize};\n\
+#[allow(dead_code)]\n\
+pub const MAX_TOKENS: usize = {max_tokens};\n\
 ",
         ),
     )
@@ -204,6 +297,125 @@ pub const QUANT_SCALE: f32 = {quant_scale:?};\n\
 
     #[cfg(feature = "tests")]
     generate_testdata(&out, &weights, dims as usize, tokenizer_path);
+}
+
+fn tokenizer_info(tk: &serde_json::Value) -> TokenizerInfo {
+    let norm = &tk["normalizer"];
+    assert_eq!(
+        norm["type"].as_str(),
+        Some("BertNormalizer"),
+        "ese only supports BertNormalizer tokenizers, got: {norm}"
+    );
+    assert_eq!(
+        norm["lowercase"].as_bool(),
+        Some(true),
+        "ese requires a lowercasing normalizer, got: {norm}"
+    );
+    // BERT semantics: strip_accents defaults to the lowercase setting when null
+    assert_ne!(
+        norm["strip_accents"].as_bool(),
+        Some(false),
+        "ese always strips accents; strip_accents=false is unsupported"
+    );
+    assert_ne!(
+        norm["clean_text"].as_bool(),
+        Some(false),
+        "ese requires clean_text"
+    );
+    assert_ne!(
+        norm["handle_chinese_chars"].as_bool(),
+        Some(false),
+        "ese requires handle_chinese_chars"
+    );
+    assert_eq!(
+        tk["pre_tokenizer"]["type"].as_str(),
+        Some("BertPreTokenizer"),
+        "ese only supports BertPreTokenizer, got: {}",
+        tk["pre_tokenizer"]
+    );
+
+    let model = &tk["model"];
+    assert_eq!(
+        model["type"].as_str(),
+        Some("WordPiece"),
+        "ese only supports WordPiece tokenizers, got: {}",
+        model["type"]
+    );
+    let continuing_prefix = model["continuing_subword_prefix"]
+        .as_str()
+        .unwrap_or("##")
+        .to_string();
+    let max_word_len = model["max_input_chars_per_word"].as_u64().unwrap_or(100);
+
+    let vocab = model["vocab"].as_object().expect("missing model.vocab");
+    let unk_token = model["unk_token"]
+        .as_str()
+        .expect("missing model.unk_token");
+    let unk_id = vocab[unk_token]
+        .as_u64()
+        .unwrap_or_else(|| panic!("unk token {unk_token:?} not in vocab")) as usize;
+
+    let (cls_id, sep_id) = parse_post_processor(tk);
+
+    TokenizerInfo {
+        unk_id,
+        cls_id,
+        sep_id,
+        continuing_prefix,
+        max_word_len,
+    }
+}
+
+/// Returns the (bos, eos) token ids added around a single sequence, if any.
+/// Only the `[CLS] A [SEP]` template shape is supported.
+fn parse_post_processor(tk: &serde_json::Value) -> (Option<usize>, Option<usize>) {
+    let pp = &tk["post_processor"];
+    if pp.is_null() {
+        return (None, None);
+    }
+    assert_eq!(
+        pp["type"].as_str(),
+        Some("TemplateProcessing"),
+        "unsupported post_processor: {pp}"
+    );
+    let single = pp["single"]
+        .as_array()
+        .expect("missing post_processor.single");
+    assert!(
+        single.len() == 3
+            && !single[0]["SpecialToken"].is_null()
+            && !single[1]["Sequence"].is_null()
+            && !single[2]["SpecialToken"].is_null(),
+        "ese only supports `[BOS] A [EOS]` templates, got: {single:?}"
+    );
+    let get_id = |entry: &serde_json::Value| {
+        let name = entry["SpecialToken"]["id"].as_str().unwrap();
+        pp["special_tokens"][name]["ids"][0]
+            .as_u64()
+            .unwrap_or_else(|| panic!("missing id for special token {name:?}")) as usize
+    };
+    (Some(get_id(&single[0])), Some(get_id(&single[2])))
+}
+
+fn read_model_config(path: &Path) -> ModelConfig {
+    if !path.exists() {
+        return ModelConfig {
+            is_model2vec: false,
+            normalize: false,
+            max_length: None,
+        };
+    }
+    println!("cargo:rerun-if-changed={}", path.to_str().unwrap());
+    let data = fs::read_to_string(path).expect("failed to read config file");
+    let v: serde_json::Value = serde_json::from_str(&data).expect("invalid config.json");
+    let is_model2vec = v.get("normalize").is_some()
+        || v.get("embedding_dtype").is_some()
+        || v["model_type"].as_str() == Some("model2vec");
+    ModelConfig {
+        is_model2vec,
+        normalize: v["normalize"].as_bool().unwrap_or(false),
+        max_length: v["max_length"].as_u64(),
+    }
 }
 
 fn phf_hash(key: &[u8], seed: u64) -> u64 {
@@ -221,12 +433,28 @@ fn parse_safetensors(model_path: &PathBuf) -> (Vec<Vec<f32>>, u64) {
     let meta_len = u64::from_le_bytes(data[..8].try_into().unwrap()) as usize;
     let meta: serde_json::Value = serde_json::from_slice(&data[8..8 + meta_len]).unwrap();
 
-    let tensor_key = meta
-        .as_object()
-        .and_then(|m| m.keys().find(|k| !k.starts_with("__")).cloned())
-        .unwrap_or_else(|| "embedding.weight".to_string());
+    let obj = meta.as_object().expect("invalid safetensors header");
+    let keys: Vec<&str> = obj
+        .keys()
+        .filter(|k| !k.starts_with("__"))
+        .map(|k| k.as_str())
+        .collect();
+    assert!(
+        !keys.contains(&"mapping") && !keys.contains(&"weights"),
+        "vocabulary-quantized model2vec models (weights/mapping tensors) are not supported yet"
+    );
+    // model2vec stores `embeddings`, sentence-transformers `embedding.weight`
+    let tensor_key = if keys.contains(&"embeddings") {
+        "embeddings"
+    } else if keys.contains(&"embedding.weight") {
+        "embedding.weight"
+    } else if keys.len() == 1 {
+        keys[0]
+    } else {
+        panic!("could not identify embedding tensor among {keys:?}");
+    };
 
-    let tensor = &meta[&tensor_key];
+    let tensor = &meta[tensor_key];
     let dtype = tensor["dtype"].as_str().unwrap_or("F32");
     let shape = tensor["shape"].as_array().unwrap();
     let params = shape[0].as_u64().unwrap();
@@ -422,6 +650,8 @@ fn generate_testdata(out: &Path, weights: &[Vec<f32>], _dims: usize, tokenizer_p
         "multiple   spaces   between",
         "a]b[c{d}e",
         "\x00\x01\x02\x03",
+        "def snake_case_fn(arg_one, arg_two):",
+        "const camelCaseValue = getParameterTypes();",
     ];
 
     let mut code = String::from("const TEST_INPUTS: &[&str] = &[\n");
@@ -431,7 +661,11 @@ fn generate_testdata(out: &Path, weights: &[Vec<f32>], _dims: usize, tokenizer_p
         code.push_str(&format!("    {:?},\n", input));
         let tokens = tokenizer.encode(input, true).unwrap();
         let token_ids = tokens.get_ids();
-        let scale = 1.0 / token_ids.len() as f32;
+        let scale = if token_ids.is_empty() {
+            1.0
+        } else {
+            1.0 / token_ids.len() as f32
+        };
         let mut vector = vec![0.0f32; _dims];
         for &tok_id in token_ids {
             for (v, &w) in vector
