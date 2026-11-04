@@ -1,26 +1,6 @@
-## Embedded Static Embeddings
+![Our mascot Scott](.github/willie.svg)
 
-This repo contains the static embedding model deployment pipeline described [here](https://www.flowercomputer.com/news/fast-static-embedding/): a sentence-transformers or model2vec static embedding model is fetched at build time, turned into a perfect-hash lookup table, and compiled straight into your binary. Encoding is a tokenizer pass plus a mean over table rows; nothing is loaded at runtime.
-
-The workspace has four Rust crates:
-
-| crate | role |
-|---|---|
-| [`ese`](./ese) | The model-agnostic runtime: BERT normalizer, pre-tokenizer, WordPiece, mean pooling, and the `include_model!` macro. Contains no model. |
-| [`ese-unicode`](./ese-unicode) | Character classes and BERT-style normalization (NFD minus nonspacing marks, lowercasing) from compact precomputed tables, about 64 KB of read-only data. No dependencies; the table is generated from pinned versions of the `unicode-normalization` and `unicode-general-category` crates and checked in. Usable on its own. |
-| [`ese-build`](./ese-build) | A library for `build.rs`. Fetches a model from the Hugging Face hub (or a local directory), detects how it is laid out and how it expects to be pooled, and writes the generated tables into `OUT_DIR`. |
-| [`encoders`](./src) (root) | A consumer of the above: picks a model from a catalog by cargo feature, compiles it in, and exposes `encode`, `encode_single` and `DIMENSIONS`. Depend on this one if you just want embeddings. |
-
-A Python wheel wrapping `encoders` lives in [`./api-py`](./api-py/readme.md).
-
-### Using `encoders`
-
-Reference it as a path dependency:
-
-```toml
-[dependencies]
-encoders = { path = "path/to/encoders", features = ["rayon"] }
-```
+# encoders
 
 ```rust
 let v = encoders::encode_single("hello world");
@@ -34,25 +14,25 @@ let batch = encoders::encode(["potato", "root vegetable"]);
 The default is `sentence-transformers/static-retrieval-mrl-en-v1` truncated to 512 dimensions and stored 8-bit. Every model in the catalog is selectable with a `model-*` feature. Cargo features are additive, so to pick another model turn the defaults off and enable exactly one model, optionally a `dim-*` feature, and optionally a `quant-*` feature:
 
 ```toml
-encoders = { path = "...", default-features = false, features = ["model-potion-base-8m", "quant-8", "rayon"] }
+encoders = { default-features = false, features = ["model-potion-base-8m", "quant-8", "rayon"] }
 ```
 
-| feature | model | trained widths |
-|---|---|---|
-| `model-static-retrieval-mrl-en-v1` | sentence-transformers/static-retrieval-mrl-en-v1 | 1024, 512, 256, 128, 64, 32 |
-| `model-static-similarity-mrl-multilingual-v1` | sentence-transformers/static-similarity-mrl-multilingual-v1 | 1024, 512, 256, 128, 64, 32 |
-| `model-bekko-static-embedding-v1` | hotchpotch/bekko-static-embedding-v1 (multilingual, 200k vocab, published as f16) | 1024, 512, 256, 128, 64, 32 |
-| `model-potion-base-2m` | minishlab/potion-base-2M | 64 |
-| `model-potion-base-4m` | minishlab/potion-base-4M | 128 |
-| `model-potion-base-8m` | minishlab/potion-base-8M | 256 |
-| `model-potion-base-32m` | minishlab/potion-base-32M | 512 |
-| `model-potion-retrieval-32m` | minishlab/potion-retrieval-32M | 512 |
-| `model-potion-science-8m` | minishlab/potion-science-8M | 256 |
-| `model-potion-science-32m` | minishlab/potion-science-32M | 256 |
-| `model-potion-code-16m` | minishlab/potion-code-16M | 256 (ships per-token weights, use `quant-16` or f32) |
-| `model-nife-mxbai-embed-large-v1` | stephantulkens/NIFE-mxbai-embed-large-v1 | 1024 |
-| `model-nife-gte-modernbert-base` | stephantulkens/NIFE-gte-modernbert-base | 768 |
-| `model-m2v-base-output` | minishlab/M2V_base_output | 256 |
+| feature                                       | model                                                                             | trained widths                                       |
+| --------------------------------------------- | --------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| `model-static-retrieval-mrl-en-v1`            | sentence-transformers/static-retrieval-mrl-en-v1                                  | 1024, 512, 256, 128, 64, 32                          |
+| `model-static-similarity-mrl-multilingual-v1` | sentence-transformers/static-similarity-mrl-multilingual-v1                       | 1024, 512, 256, 128, 64, 32                          |
+| `model-bekko-static-embedding-v1`             | hotchpotch/bekko-static-embedding-v1 (multilingual, 200k vocab, published as f16) | 1024, 512, 256, 128, 64, 32                          |
+| `model-potion-base-2m`                        | minishlab/potion-base-2M                                                          | 64                                                   |
+| `model-potion-base-4m`                        | minishlab/potion-base-4M                                                          | 128                                                  |
+| `model-potion-base-8m`                        | minishlab/potion-base-8M                                                          | 256                                                  |
+| `model-potion-base-32m`                       | minishlab/potion-base-32M                                                         | 512                                                  |
+| `model-potion-retrieval-32m`                  | minishlab/potion-retrieval-32M                                                    | 512                                                  |
+| `model-potion-science-8m`                     | minishlab/potion-science-8M                                                       | 256                                                  |
+| `model-potion-science-32m`                    | minishlab/potion-science-32M                                                      | 256                                                  |
+| `model-potion-code-16m`                       | minishlab/potion-code-16M                                                         | 256 (ships per-token weights, use `quant-16` or f32) |
+| `model-nife-mxbai-embed-large-v1`             | stephantulkens/NIFE-mxbai-embed-large-v1                                          | 1024                                                 |
+| `model-nife-gte-modernbert-base`              | stephantulkens/NIFE-gte-modernbert-base                                           | 768                                                  |
+| `model-m2v-base-output`                       | minishlab/M2V_base_output                                                         | 256                                                  |
 
 Each entry is pinned to a commit sha in `build.rs` together with the widths it was trained at; those are also exposed as `encoders::model::TRUNCATION_POINTS`, `NATIVE_DIMENSIONS` and `MATRYOSHKA`. The build fails with a clear message if no model or more than one is enabled, or if a `dim-*` feature asks for a width the model was not trained at. Only the unquantized upstream weights are used; quantization is done here. `potion-multilingual-128M` is not in the catalog because its Unigram tokenizer is not supported by the runtime.
 
@@ -77,14 +57,14 @@ and `lib.rs` is just `ese::include_model!();`. The summary line names the model,
 
 `ese-build` reads everything else from the model's own files:
 
-| detected | from |
-|---|---|
-| where the weights and tokenizer live | `modules.json`, path of the `StaticEmbedding` module |
-| L2-normalize the output | a `Normalize` module in `modules.json`, else `config.json`'s `normalize` |
-| drop `[UNK]` before pooling | `config.json` says `model_type: model2vec` (sentence-transformers keeps the row) |
-| embedding tensor | `embedding.weight`, `embeddings`, `0`, or the only 2-D tensor |
-| vocabulary quantization | the optional `mapping` and `weights` tensors |
-| lowercase, accent stripping, CJK padding, subword prefix, max word length, unk token | `tokenizer.json` |
+| detected                                                                             | from                                                                             |
+| ------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------- |
+| where the weights and tokenizer live                                                 | `modules.json`, path of the `StaticEmbedding` module                             |
+| L2-normalize the output                                                              | a `Normalize` module in `modules.json`, else `config.json`'s `normalize`         |
+| drop `[UNK]` before pooling                                                          | `config.json` says `model_type: model2vec` (sentence-transformers keeps the row) |
+| embedding tensor                                                                     | `embedding.weight`, `embeddings`, `0`, or the only 2-D tensor                    |
+| vocabulary quantization                                                              | the optional `mapping` and `weights` tensors                                     |
+| lowercase, accent stripping, CJK padding, subword prefix, max word length, unk token | `tokenizer.json`                                                                 |
 
 Models with a tokenizer other than `BertNormalizer` + `BertPreTokenizer` + `WordPiece` (for example `potion-multilingual-128M`, which is Unigram) fail the build with a message naming what was found. Any module in `modules.json` other than `StaticEmbedding` and `Normalize` is rejected as not static.
 
