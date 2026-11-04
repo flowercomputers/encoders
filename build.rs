@@ -1,463 +1,217 @@
-use std::{
-    collections::HashSet,
-    env,
-    fs::{self},
-    path::{Path, PathBuf},
-};
+use std::{env, path::PathBuf};
 
-static MODEL_URL: &'static str = "https://huggingface.co/sentence-transformers/static-retrieval-mrl-en-v1/resolve/main/0_StaticEmbedding/model.safetensors";
-static TOKENIZER_URL: &'static str = "https://huggingface.co/sentence-transformers/static-retrieval-mrl-en-v1/resolve/main/0_StaticEmbedding/tokenizer.json";
+use ese_build::{Builder, Quant};
+
+/// A model selectable with a `model-*` cargo feature. Revisions are pinned
+/// to the commit that was current when the catalog was written. `dims` lists
+/// the widths the model was trained at, native first; that cannot be
+/// detected from the model's files, so it is recorded here and enforced.
+struct ModelSpec {
+    feature: &'static str,
+    repo: &'static str,
+    revision: &'static str,
+    dims: &'static [usize],
+}
+
+const MRL: &[usize] = &[1024, 512, 256, 128, 64, 32];
+
+const CATALOG: &[ModelSpec] = &[
+    ModelSpec {
+        feature: "model-static-retrieval-mrl-en-v1",
+        repo: "sentence-transformers/static-retrieval-mrl-en-v1",
+        revision: "f60985c706f192d45d218078e49e5a8b6f15283a",
+        dims: MRL,
+    },
+    ModelSpec {
+        feature: "model-static-similarity-mrl-multilingual-v1",
+        repo: "sentence-transformers/static-similarity-mrl-multilingual-v1",
+        revision: "b68f4122911bcffcd6e1f695f2d99cd6788972d8",
+        dims: MRL,
+    },
+    ModelSpec {
+        feature: "model-bekko-static-embedding-v1",
+        repo: "hotchpotch/bekko-static-embedding-v1",
+        revision: "c18167b8f244c1bc6de21ce9b710bac8a29c4615",
+        dims: MRL,
+    },
+    ModelSpec {
+        feature: "model-potion-base-2m",
+        repo: "minishlab/potion-base-2M",
+        revision: "389b9f64be5aa4ae7a6bc6fe95ef20ce485ae5da",
+        dims: &[64],
+    },
+    ModelSpec {
+        feature: "model-potion-base-4m",
+        repo: "minishlab/potion-base-4M",
+        revision: "9b3cff412d30be9ae8603fe10224c224f3401869",
+        dims: &[128],
+    },
+    ModelSpec {
+        feature: "model-potion-base-8m",
+        repo: "minishlab/potion-base-8M",
+        revision: "bf8b056651a2c21b8d2565580b8569da283cab23",
+        dims: &[256],
+    },
+    ModelSpec {
+        feature: "model-potion-base-32m",
+        repo: "minishlab/potion-base-32M",
+        revision: "1e5a03f8eeb2c98b928fbbd846f22f816360919f",
+        dims: &[512],
+    },
+    ModelSpec {
+        feature: "model-potion-retrieval-32m",
+        repo: "minishlab/potion-retrieval-32M",
+        revision: "6fc8051fab2a1e0ee76689cf08c853792ac285e7",
+        dims: &[512],
+    },
+    ModelSpec {
+        feature: "model-potion-science-8m",
+        repo: "minishlab/potion-science-8M",
+        revision: "b186d1c45c8205d552a00f7a0979896ca2dc9e87",
+        dims: &[256],
+    },
+    ModelSpec {
+        feature: "model-potion-science-32m",
+        repo: "minishlab/potion-science-32M",
+        revision: "7366079845507de14a4330007cdfa01bb92bca52",
+        dims: &[256],
+    },
+    ModelSpec {
+        feature: "model-potion-code-16m",
+        repo: "minishlab/potion-code-16M",
+        revision: "1b0ff71095656b23306542bbad34a09109673720",
+        dims: &[256],
+    },
+    ModelSpec {
+        feature: "model-nife-mxbai-embed-large-v1",
+        repo: "stephantulkens/NIFE-mxbai-embed-large-v1",
+        revision: "970a0151f3faeddbab5c68be38d52bbc5ea719ab",
+        dims: &[1024],
+    },
+    ModelSpec {
+        feature: "model-nife-gte-modernbert-base",
+        repo: "stephantulkens/NIFE-gte-modernbert-base",
+        revision: "9b85ba93d5a7729db11dfea90d20a5f392a88747",
+        dims: &[768],
+    },
+    ModelSpec {
+        feature: "model-m2v-base-output",
+        repo: "minishlab/M2V_base_output",
+        revision: "0b86653131492ba2a858911d5ccf84ae774b40f3",
+        dims: &[256],
+    },
+];
+
+const DIM_FEATURES: &[(&str, usize)] = &[
+    ("dim-1024", 1024),
+    ("dim-768", 768),
+    ("dim-512", 512),
+    ("dim-256", 256),
+    ("dim-128", 128),
+    ("dim-64", 64),
+    ("dim-32", 32),
+];
 
 fn main() {
-    let out = Path::new(&env::var("OUT_DIR").unwrap()).to_path_buf();
+    println!("cargo:rerun-if-changed=build.rs");
+    let out = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR"));
 
-    let dtype = dtype();
+    let model = selected_model();
+    let dims = selected_dims(model);
+    let quant = selected_quant();
 
-    let model_dir = shared_model_dir(&out);
-    let model_path = &model_dir.join("model.safetensors");
-    let tokenizer_path = &model_dir.join("tokenizer.json");
+    let summary = Builder::hub(model.repo)
+        .revision(model.revision)
+        .dims(dims)
+        .truncation_points(Some(model.dims))
+        .quant(quant)
+        .test_data(cfg!(feature = "tests"))
+        .generate(&out)
+        .unwrap_or_else(|e| panic!("ese-build failed for {}: {e}", model.repo));
 
-    download_if_missing(model_path, MODEL_URL);
-    download_if_missing(tokenizer_path, TOKENIZER_URL);
-    let (weights, dims) = parse_safetensors(model_path);
+    println!("cargo:warning={summary}");
+}
 
-    println!(
-        "cargo:rerun-if-changed={}",
-        tokenizer_path.to_str().unwrap()
-    );
-    let tokenizer_data = fs::read_to_string(tokenizer_path).expect("failed to read tokenizer file");
-    let tk: serde_json::Value = serde_json::from_str(tokenizer_data.as_str()).unwrap();
-    let vocab = tk["model"]["vocab"]
-        .as_object()
-        .expect("missing model.vocab");
+/// Cargo features are exposed to build scripts as `CARGO_FEATURE_<NAME>`
+/// with dashes turned into underscores and upper-cased.
+fn feature_on(name: &str) -> bool {
+    env::var_os(format!(
+        "CARGO_FEATURE_{}",
+        name.replace('-', "_").to_ascii_uppercase()
+    ))
+    .is_some()
+}
 
-    let mut unk: Vec<f32> = Default::default();
-    let mut cls: Vec<f32> = Default::default();
-    let mut sep: Vec<f32> = Default::default();
-
-    // Collect (token, weight_index) pairs
-    let mut entries: Vec<(String, usize)> = Vec::new();
-    for (token, id_val) in vocab {
-        let i = id_val.as_u64().unwrap() as usize;
-        if i >= weights.len() {
-            continue;
-        }
-        entries.push((token.clone(), i));
-        match i {
-            100 => unk = weights[i].clone(),
-            101 => cls = weights[i].clone(),
-            102 => sep = weights[i].clone(),
-            _ => {}
-        }
-    }
-
-    // hash table
-    let vocab_size = entries.len();
-    let table_size = vocab_size.next_power_of_two();
-    let table_mask = table_size - 1;
-    let num_buckets = vocab_size;
-
-    // bucket entries by primary hash
-    let mut buckets: Vec<Vec<usize>> = vec![vec![]; num_buckets];
-    for (i, (token, _)) in entries.iter().enumerate() {
-        let b = (phf_hash(token.as_bytes(), 0) as usize) % num_buckets;
-        buckets[b].push(i);
-    }
-
-    let mut bucket_order: Vec<usize> = (0..num_buckets).collect();
-    bucket_order.sort_by(|a, b| buckets[*b].len().cmp(&buckets[*a].len()));
-
-    let mut seeds: Vec<u32> = vec![0; num_buckets];
-    let mut verify: Vec<u64> = vec![0; table_size];
-    let mut slot_to_weight: Vec<usize> = vec![0; table_size];
-    let mut occupied: Vec<bool> = vec![false; table_size];
-
-    for &bi in &bucket_order {
-        if buckets[bi].is_empty() {
-            continue;
-        }
-
-        let mut attempts = 0;
-        let mut i: u32 = 0;
-        'search: loop {
-            let seed = i | 1;
-            i += 1;
-
-            attempts += 1;
-            assert!(
-                attempts < 1_000_000,
-                "PHF construction stuck on bucket {bi} ({} entries)",
-                buckets[bi].len()
-            );
-
-            let mut trial_slots: Vec<usize> = Vec::with_capacity(buckets[bi].len());
-            let mut seen = HashSet::with_capacity(buckets[bi].len());
-
-            for &entry_idx in &buckets[bi] {
-                let slot =
-                    (phf_hash(entries[entry_idx].0.as_bytes(), seed as u64) as usize) & table_mask;
-                if occupied[slot] || !seen.insert(slot) {
-                    continue 'search;
-                }
-                trial_slots.push(slot);
-            }
-
-            // all placed
-            seeds[bi] = seed;
-            for (j, &entry_idx) in buckets[bi].iter().enumerate() {
-                let slot = trial_slots[j];
-                occupied[slot] = true;
-                verify[slot] = phf_hash(entries[entry_idx].0.as_bytes(), u64::MAX);
-                slot_to_weight[slot] = entries[entry_idx].1;
-            }
-            break;
-        }
-    }
-
-    // compute global min/max for quantization
-    let (global_min, global_max) = if cfg!(feature = "quant-8") || cfg!(feature = "quant-16") {
-        let mut mn = f32::INFINITY;
-        let mut mx = f32::NEG_INFINITY;
-        for row in &weights {
-            for &v in row {
-                mn = mn.min(v);
-                mx = mx.max(v);
-            }
-        }
-        (mn, mx)
-    } else {
-        (0.0, 1.0) // unused
-    };
-
-    let quant_max = if cfg!(feature = "quant-8") {
-        255.0
-    } else if cfg!(feature = "quant-16") {
-        65535.0
-    } else {
-        1.0
-    };
-
-    let quant_scale = if (global_max - global_min).abs() < f32::EPSILON {
-        1.0
-    } else {
-        (global_max - global_min) / quant_max
-    };
-
-    // reorder weights into PHF slot with verify hash prepended
-    // && zero-fill empty slots
-    let zero_row = vec![0.0f32; dims as usize];
-    let slot_size = 8 + dims as usize * dtype_sz();
-    let mut phf_slots: Vec<u8> = Vec::with_capacity(table_size * slot_size);
-    for slot in 0..table_size {
-        phf_slots.extend_from_slice(&verify[slot].to_le_bytes());
-        let row = if occupied[slot] {
-            &weights[slot_to_weight[slot]]
-        } else {
-            &zero_row
-        };
-        phf_slots.extend_from_slice(&quantize_f32_to_bytes(row, global_min, quant_scale));
-    }
-    fs::write(out.join("weights.bin"), &phf_slots).unwrap();
-
-    // emit seeds as [u64; NUM_BUCKETS]
-    let mut seeds_bin: Vec<u8> = Vec::with_capacity(num_buckets * 8);
-    for &s in &seeds {
-        seeds_bin.extend_from_slice(&s.to_le_bytes());
-    }
-    fs::write(out.join("seeds.bin"), &seeds_bin).unwrap();
-
-    // emit verify hashes as [u64; TABLE_SIZE]
-    let mut verify_bin: Vec<u8> = Vec::with_capacity(table_size * 8);
-    for &v in &verify {
-        verify_bin.extend_from_slice(&v.to_le_bytes());
-    }
-    fs::write(out.join("verify.bin"), &verify_bin).unwrap();
-
-    let unk_str = format_quantized_param(&unk, global_min, quant_scale);
-    let cls_str = format_quantized_param(&cls, global_min, quant_scale);
-    let sep_str = format_quantized_param(&sep, global_min, quant_scale);
-
-    let dtype_sz = dtype_sz();
-
-    // emit constants
-    fs::write(
-        out.join("model_constants.rs"),
-        format!(
-            "
-pub const DIMENSIONS: usize = {dims};\n\
-pub type Param = [{dtype}; DIMENSIONS];\n\
-pub const TABLE_SIZE: usize = {table_size};\n\
-pub const TABLE_MASK: usize = {table_mask};\n\
-pub const NUM_BUCKETS: usize = {num_buckets};\n\
-pub const SLOT_SIZE: usize = 8 + DIMENSIONS * DTYPE_SIZE;\n\
-pub const UNK: Param = {unk_str};\n\
-pub const CLS: Param = {cls_str};\n\
-pub const SEP: Param = {sep_str};\n\
-pub const MAX_WORD_LEN: usize = 100;\n\
-pub const DTYPE_SIZE: usize = {dtype_sz};\n\
-pub const QUANT_MIN: f32 = {global_min:?};\n\
-pub const QUANT_SCALE: f32 = {quant_scale:?};\n\
-",
+fn selected_model() -> &'static ModelSpec {
+    let on: Vec<&ModelSpec> = CATALOG.iter().filter(|m| feature_on(m.feature)).collect();
+    match on.as_slice() {
+        [m] => m,
+        [] => panic!(
+            "encoders: no model selected. Enable exactly one of: {}. \
+             If you set `default-features = false`, add a model feature, a dim-* \
+             feature if the model supports truncation, and a quant-* feature.",
+            feature_list()
         ),
-    )
-    .unwrap();
-
-    #[cfg(feature = "tests")]
-    generate_testdata(&out, &weights, dims as usize, tokenizer_path);
-}
-
-fn phf_hash(key: &[u8], seed: u64) -> u64 {
-    let mut h = seed ^ 0x517cc1b727220a95;
-    for &b in key {
-        h = (h ^ b as u64).wrapping_mul(0x2127599bf4325c37);
+        many => panic!(
+            "encoders: several models selected ({}). Cargo features are additive: \
+             depend on encoders with `default-features = false` and enable exactly one of {}.",
+            many.iter()
+                .map(|m| m.feature)
+                .collect::<Vec<_>>()
+                .join(", "),
+            feature_list()
+        ),
     }
-    h ^ (h >> 32)
 }
 
-fn parse_safetensors(model_path: &PathBuf) -> (Vec<Vec<f32>>, u64) {
-    println!("cargo:rerun-if-changed={}", model_path.to_str().unwrap());
+fn feature_list() -> String {
+    CATALOG
+        .iter()
+        .map(|m| m.feature)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
 
-    let data = fs::read(model_path).expect("failed to read safetensors file");
-    let meta_len = u64::from_le_bytes(data[..8].try_into().unwrap()) as usize;
-    let meta: serde_json::Value = serde_json::from_slice(&data[8..8 + meta_len]).unwrap();
-
-    let tensor_key = meta
-        .as_object()
-        .and_then(|m| m.keys().find(|k| !k.starts_with("__")).cloned())
-        .unwrap_or_else(|| "embedding.weight".to_string());
-
-    let tensor = &meta[&tensor_key];
-    let dtype = tensor["dtype"].as_str().unwrap_or("F32");
-    let shape = tensor["shape"].as_array().unwrap();
-    let params = shape[0].as_u64().unwrap();
-    let full_dims = shape[1].as_u64().unwrap();
-
-    let dims = full_dims.min(trunc_dims());
-
-    let offsets = tensor["data_offsets"].as_array().unwrap();
-    let start = 8 + meta_len + offsets[0].as_u64().unwrap() as usize;
-
-    let src_elem_size: usize = match dtype {
-        "F16" | "BF16" => 2,
-        "F32" => 4,
-        "F64" => 8,
-        other => panic!("unsupported dtype: {other}"),
+/// The truncation a dim-* feature asks for, validated against the model.
+fn selected_dims(model: &ModelSpec) -> Option<usize> {
+    let on: Vec<usize> = DIM_FEATURES
+        .iter()
+        .filter(|(f, _)| feature_on(f))
+        .map(|(_, d)| *d)
+        .collect();
+    let dims = match on.as_slice() {
+        [] => return None,
+        [d] => *d,
+        many => panic!("encoders: several dim-* features enabled ({many:?}); enable exactly one"),
     };
-
-    let row_src_bytes = full_dims as usize * src_elem_size;
-    let mut tensors: Vec<Vec<f32>> = Vec::with_capacity(params as usize);
-    let mut embedding: Vec<f32> = Vec::with_capacity(dims as usize);
-
-    for row in 0..params as usize {
-        let row_start = start + row * row_src_bytes;
-        for col in 0..dims as usize {
-            let elem_start = row_start + col * src_elem_size;
-            let f32_val = match dtype {
-                "F16" => {
-                    let bits =
-                        u16::from_le_bytes(data[elem_start..elem_start + 2].try_into().unwrap());
-                    f16_to_f32(bits)
-                }
-                "BF16" => {
-                    let bits =
-                        u16::from_le_bytes(data[elem_start..elem_start + 2].try_into().unwrap());
-                    bf16_to_f32(bits)
-                }
-                "F32" => f32::from_le_bytes(data[elem_start..elem_start + 4].try_into().unwrap()),
-                "F64" => {
-                    f64::from_le_bytes(data[elem_start..elem_start + 8].try_into().unwrap()) as f32
-                }
-                _ => unreachable!(),
-            };
-            embedding.push(f32_val);
+    if !model.dims.contains(&dims) {
+        let native = model.dims[0];
+        if dims > native {
+            panic!(
+                "encoders: dim-{dims} requested but {} has {native} dimensions",
+                model.repo
+            );
         }
-        tensors.push(embedding.clone());
-        embedding.clear();
-    }
-
-    (tensors, dims)
-}
-
-fn f16_to_f32(h: u16) -> f32 {
-    let sign = ((h >> 15) & 1) as u32;
-    let exp = ((h >> 10) & 0x1F) as u32;
-    let mant = (h & 0x3FF) as u32;
-
-    let (f_exp, f_mant) = match exp {
-        0 => {
-            if mant == 0 {
-                (0u32, 0u32)
-            } else {
-                let mut m = mant;
-                let mut e = 1u32;
-                while (m & 0x400) == 0 {
-                    m <<= 1;
-                    e += 1;
-                }
-                ((127 - 15 + 1 - e), (m & 0x3FF) << 13)
-            }
+        if model.dims.len() == 1 {
+            panic!(
+                "encoders: dim-{dims} requested but {} is not Matryoshka-trained and only \
+                 supports its native {native} dimensions; drop the dim-* feature",
+                model.repo
+            );
         }
-        31 => (255u32, mant << 13),
-        _ => ((exp + 127 - 15), mant << 13),
-    };
-
-    f32::from_bits((sign << 31) | (f_exp << 23) | f_mant)
-}
-
-fn bf16_to_f32(b: u16) -> f32 {
-    f32::from_bits((b as u32) << 16)
-}
-
-fn quantize_f32_to_bytes(values: &[f32], min: f32, scale: f32) -> Vec<u8> {
-    if cfg!(feature = "quant-8") {
-        values
-            .iter()
-            .map(|&v| (((v - min) / scale).round() as u8).clamp(0, 255))
-            .flat_map(|q| q.to_le_bytes())
-            .collect()
-    } else if cfg!(feature = "quant-16") {
-        values
-            .iter()
-            .map(|&v| (((v - min) / scale).round() as u16).clamp(0, 65535))
-            .flat_map(|q| q.to_le_bytes())
-            .collect()
-    } else {
-        values.iter().flat_map(|v| v.to_le_bytes()).collect()
+        panic!(
+            "encoders: dim-{dims} requested but {} was trained at {:?}",
+            model.repo, model.dims
+        );
     }
+    Some(dims)
 }
 
-fn format_quantized_param(values: &[f32], min: f32, scale: f32) -> String {
-    if cfg!(feature = "quant-8") {
-        let q: Vec<u8> = values
-            .iter()
-            .map(|&v| ((v - min) / scale).round() as u8)
-            .collect();
-        format!("{q:?}")
-    } else if cfg!(feature = "quant-16") {
-        let q: Vec<u16> = values
-            .iter()
-            .map(|&v| ((v - min) / scale).round() as u16)
-            .collect();
-        format!("{q:?}")
-    } else {
-        format!("{values:?}")
+fn selected_quant() -> Quant {
+    match (feature_on("quant-8"), feature_on("quant-16")) {
+        (true, true) => panic!("encoders: quant-8 and quant-16 are mutually exclusive"),
+        (true, false) => Quant::U8,
+        (false, true) => Quant::U16,
+        (false, false) => Quant::F32,
     }
-}
-
-fn download_if_missing(path: &Path, url: &str) {
-    if path.exists() {
-        return;
-    }
-    eprintln!("cargo:warning=Downloading {}...", path.display());
-    let resp = minreq::get(url).send().expect("download failed");
-    assert!(resp.status_code == 200, "HTTP {}", resp.status_code);
-    fs::write(path, resp.as_bytes()).unwrap();
-}
-
-fn trunc_dims() -> u64 {
-    if cfg!(feature = "dim-1024") {
-        1024
-    } else if cfg!(feature = "dim-768") {
-        768
-    } else if cfg!(feature = "dim-512") {
-        512
-    } else if cfg!(feature = "dim-256") {
-        256
-    } else if cfg!(feature = "dim-128") {
-        128
-    } else if cfg!(feature = "dim-64") {
-        64
-    } else if cfg!(feature = "dim-32") {
-        32
-    } else {
-        512
-    }
-}
-
-fn dtype() -> &'static str {
-    if cfg!(feature = "quant-16") {
-        "u16"
-    } else if cfg!(feature = "quant-8") {
-        "u8"
-    } else {
-        "f32"
-    }
-}
-
-fn dtype_sz() -> usize {
-    if cfg!(feature = "quant-16") {
-        2
-    } else if cfg!(feature = "quant-8") {
-        1
-    } else {
-        4
-    }
-}
-
-fn shared_model_dir(out: &Path) -> PathBuf {
-    let target_dir = out
-        .ancestors()
-        .find(|p| p.file_name().map_or(false, |f| f == "target"))
-        .unwrap_or_else(|| panic!("could not find target/ in OUT_DIR"))
-        .to_path_buf();
-    let dir = target_dir.join(concat!(env!("CARGO_PKG_NAME"), "-cache"));
-    fs::create_dir_all(&dir).unwrap();
-    dir
-}
-
-#[cfg(feature = "tests")]
-fn generate_testdata(out: &Path, weights: &[Vec<f32>], _dims: usize, tokenizer_path: &PathBuf) {
-    let tokenizer =
-        tokenizers::Tokenizer::from_file(tokenizer_path).expect("failed to load tokenizer");
-
-    let inputs: Vec<&str> = vec![
-        "Hello world",
-        "The quick brown fox jumps over the lazy dog",
-        "",
-        "   ",
-        "café résumé naïve",
-        "你好世界",
-        "Hello, world! How are you?",
-        "UPPER CASE text",
-        "multiple   spaces   between",
-        "a]b[c{d}e",
-        "\x00\x01\x02\x03",
-    ];
-
-    let mut code = String::from("const TEST_INPUTS: &[&str] = &[\n");
-    let mut outputs: Vec<Vec<f32>> = Vec::new();
-
-    for &input in &inputs {
-        code.push_str(&format!("    {:?},\n", input));
-        let tokens = tokenizer.encode(input, true).unwrap();
-        let token_ids = tokens.get_ids();
-        let scale = 1.0 / token_ids.len() as f32;
-        let mut vector = vec![0.0f32; _dims];
-        for &tok_id in token_ids {
-            for (v, &w) in vector
-                .iter_mut()
-                .zip(unsafe { weights.get_unchecked(tok_id as usize) }.iter())
-            {
-                *v += w
-            }
-        }
-        for v in vector.iter_mut() {
-            *v *= scale
-        }
-
-        outputs.push(vector);
-    }
-
-    code.push_str("];\n\n");
-    code.push_str(&format!(
-        "const TEST_OUTPUTS: &[[f32; {}]; {}] = &[\n",
-        _dims,
-        outputs.len()
-    ));
-    for vec in &outputs {
-        code.push_str(&format!("    {:?},\n", vec.as_slice()));
-    }
-    code.push_str("];\n");
-
-    fs::write(out.join("optional_testdata.rs"), code).unwrap();
 }

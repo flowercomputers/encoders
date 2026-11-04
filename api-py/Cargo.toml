@@ -8,6 +8,8 @@ name = "ese"
 crate-type = ["cdylib"]
 
 [dependencies]
-ese_core = { package = "ese", path = "..", features = ["rayon", "dim-512", "quant-8"] }
+# Default model: static-retrieval-mrl-en-v1 at 512 dims, 8-bit. Set
+# `default-features = false` and pick model-*/dim-*/quant-* features to change it.
+encoders = { path = "..", features = ["rayon"] }
 numpy = "0.28.0"
 pyo3 = { version = "0", features = ["extension-module"] }

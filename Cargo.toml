@@ -1,24 +1,53 @@
 [package]
-name = "ese"
-version = "0.1.0"
+name = "encoders"
+version = "1.0.0"
 edition = "2024"
-description = "Extremely Static Embeddings"
+description = "Static embedding models (sentence-transformers static-mrl and model2vec potion families) compiled into the binary with ese"
 readme = "readme.md"
 license-file = "license"
 authors = ["W. Turner Abney <wta@ieee.org>"]
-homepage = "https://github.com/flowercomputers/ese"
-repository = "https://github.com/flowercomputers/ese"
+homepage = "https://github.com/flowercomputers/encoders"
+repository = "https://github.com/flowercomputers/encoders"
 keywords = ["embeddings", "model2vec", "nlp", "search"]
-categories = ["text-processing", "artificial-intelligence", "compression", "encoding", "science"]
+categories = [
+    "text-processing",
+    "artificial-intelligence",
+    "compression",
+    "encoding",
+    "science",
+]
+build = "build.rs"
 
 [workspace]
-resolver = "1"
-members = [
-  "api-py",
-]
+resolver = "2"
+members = ["ese", "ese-unicode", "ese-build", "api-py"]
+
+[profile.release]
+codegen-units = 1
+lto = "fat"
 
 [features]
-default = ["dim-512"]
+default = ["model-static-retrieval-mrl-en-v1", "dim-512"]
+
+# Exactly one model. Cargo features are additive, so to pick a non-default
+# model depend on this crate with `default-features = false`.
+model-static-retrieval-mrl-en-v1 = []
+model-static-similarity-mrl-multilingual-v1 = []
+model-bekko-static-embedding-v1 = []
+model-potion-base-2m = []
+model-potion-base-4m = []
+model-potion-base-8m = []
+model-potion-base-32m = []
+model-potion-retrieval-32m = []
+model-potion-science-8m = []
+model-potion-science-32m = []
+model-potion-code-16m = []
+model-nife-mxbai-embed-large-v1 = []
+model-nife-gte-modernbert-base = []
+model-m2v-base-output = []
+
+# Truncation. Only the Matryoshka-trained sentence-transformers models accept
+# a width below their native 1024; the build fails otherwise.
 dim-1024 = []
 dim-768 = []
 dim-512 = []
@@ -26,26 +55,32 @@ dim-256 = []
 dim-128 = []
 dim-64 = []
 dim-32 = []
+
+# Storage: f32 when neither is set. Per-column affine quantization, summed in
+# integer lanes.
 quant-16 = []
 quant-8 = []
-rayon = ["dep:rayon"]
-tests = ["dep:tokenizers"]
+
+rayon = ["ese/rayon"]
+# Generate reference embeddings with the `tokenizers` crate and compare
+# against them in `cargo test --features tests`.
+tests = ["ese-build/test-data"]
 
 [dependencies]
-rayon = { version = "1", optional = true }
-unicode-normalization = "0"
-unicode-general-category = "1"
+ese = { path = "ese" }
 
 [build-dependencies]
-serde_json = "1"
-tokenizers = { version = "0", optional = true }
-minreq = { version = "2", features = ["https-native"] }
+ese-build = { path = "ese-build" }
 
 [dev-dependencies]
 criterion = { version = "0", features = ["html_reports"] }
 model2vec-rs = "0"
 parquet = { version = "58" }
 minreq = { version = "2", features = ["https-native"] }
+
+[[bench]]
+name = "bench_encode"
+harness = false
 
 [[bench]]
 name = "gooaq"

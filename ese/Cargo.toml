@@ -1,0 +1,18 @@
+[package]
+name = "ese"
+version = "0.1.0"
+edition = "2024"
+description = "Extremely Static Embeddings: runtime for compiled-in static embedding models"
+license = "Apache-2.0"
+authors = ["W. Turner Abney <wta@ieee.org>"]
+homepage = "https://github.com/flowercomputers/ese"
+repository = "https://github.com/flowercomputers/ese"
+keywords = ["embeddings", "model2vec", "nlp", "search"]
+categories = ["text-processing", "artificial-intelligence", "compression", "encoding", "science"]
+
+[features]
+rayon = ["dep:rayon"]
+
+[dependencies]
+ese-unicode = { path = "../ese-unicode" }
+rayon = { version = "1", optional = true }

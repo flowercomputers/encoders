@@ -643,6 +643,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "34aa73646ffb006b8f5147f3dc182bd4bcb190227ce861fc4a4844bf8e3cb2c0"
 
 [[package]]
+name = "encoders"
+version = "1.0.0"
+dependencies = [
+ "criterion",
+ "ese",
+ "ese-build",
+ "minreq",
+ "model2vec-rs",
+ "parquet",
+]
+
+[[package]]
 name = "errno"
 version = "0.3.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -665,24 +677,35 @@ dependencies = [
 name = "ese"
 version = "0.1.0"
 dependencies = [
- "criterion",
- "minreq",
- "model2vec-rs",
- "parquet",
+ "ese-unicode",
  "rayon",
+]
+
+[[package]]
+name = "ese-build"
+version = "0.1.0"
+dependencies = [
+ "ese",
+ "minreq",
  "serde_json",
  "tokenizers",
- "unicode-general-category",
- "unicode-normalization",
 ]
 
 [[package]]
 name = "ese-py"
 version = "0.1.0"
 dependencies = [
- "ese",
+ "encoders",
  "numpy",
  "pyo3",
+]
+
+[[package]]
+name = "ese-unicode"
+version = "17.0.0"
+dependencies = [
+ "unicode-general-category",
+ "unicode-normalization",
 ]
 
 [[package]]

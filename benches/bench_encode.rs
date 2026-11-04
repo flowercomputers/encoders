@@ -2,13 +2,25 @@ use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 
 use std::hint::black_box;
 
-use ese::{encode, encode_single};
+use encoders::{encode, encode_single};
 
 use model2vec_rs::model::StaticModel;
 use std::sync::LazyLock;
 
-static MODEL2VEC: LazyLock<StaticModel> = LazyLock::new(|| {
-    StaticModel::from_pretrained("minishlab/potion-base-8M", None, None, None).unwrap()
+/// model2vec-rs baseline on the same model. It can only load model2vec-style
+/// repos (config.json and weights at the root), so for the sentence-transformers
+/// models the comparison is skipped.
+static MODEL2VEC: LazyLock<Option<StaticModel>> = LazyLock::new(|| {
+    match StaticModel::from_pretrained(encoders::model::MODEL_ID, None, None, None) {
+        Ok(m) => Some(m),
+        Err(e) => {
+            eprintln!(
+                "model2vec-rs cannot load {}; skipping baseline ({e})",
+                encoders::model::MODEL_ID
+            );
+            None
+        }
+    }
 });
 
 fn sentences(n: usize) -> Vec<String> {
@@ -39,10 +51,11 @@ fn bench_single(c: &mut Criterion) {
         b.iter(|| encode_single(black_box(input)));
     });
 
-    group.bench_function("model2vec-rs", |b| {
-        let model = &*MODEL2VEC;
-        b.iter(|| model.encode(black_box(&[input.into()])));
-    });
+    if let Some(model) = &*MODEL2VEC {
+        group.bench_function("model2vec-rs", |b| {
+            b.iter(|| model.encode(black_box(&[input.into()])));
+        });
+    }
 
     group.finish();
 }
@@ -54,13 +67,14 @@ fn bench_batch(c: &mut Criterion) {
         let data = sentences(n);
 
         group.bench_with_input(BenchmarkId::new("custom", n), &data, |b, data| {
-            b.iter(|| encode(black_box(data.clone())));
+            b.iter(|| encode(black_box(data.iter())));
         });
 
-        group.bench_with_input(BenchmarkId::new("model2vec-rs", n), &data, |b, data| {
-            let model = &*MODEL2VEC;
-            b.iter(|| model.encode(black_box(data)));
-        });
+        if let Some(model) = &*MODEL2VEC {
+            group.bench_with_input(BenchmarkId::new("model2vec-rs", n), &data, |b, data| {
+                b.iter(|| model.encode(black_box(data)));
+            });
+        }
     }
 
     group.finish();
@@ -76,13 +90,14 @@ fn bench_throughput(c: &mut Criterion) {
         group.throughput(criterion::Throughput::Elements(n as u64));
 
         group.bench_with_input(BenchmarkId::new("custom", n), &data, |b, data| {
-            b.iter(|| encode(black_box(data.clone())));
+            b.iter(|| encode(black_box(data.iter())));
         });
 
-        group.bench_with_input(BenchmarkId::new("model2vec-rs", n), &data, |b, data| {
-            let model = &*MODEL2VEC;
-            b.iter(|| model.encode(black_box(data)));
-        });
+        if let Some(model) = &*MODEL2VEC {
+            group.bench_with_input(BenchmarkId::new("model2vec-rs", n), &data, |b, data| {
+                b.iter(|| model.encode(black_box(data)));
+            });
+        }
     }
 
     group.finish();

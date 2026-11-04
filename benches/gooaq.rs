@@ -8,6 +8,7 @@ const PARQUET_URLS: &[&str] = &[
     "https://huggingface.co/api/datasets/sentence-transformers/gooaq/parquet/pair/train/0.parquet",
     "https://huggingface.co/api/datasets/sentence-transformers/gooaq/parquet/pair/train/1.parquet",
 ];
+
 const CACHE_DIR: &str = "target/gooaq";
 
 fn download_parquet(url: &str, path: &PathBuf) {
@@ -67,7 +68,7 @@ fn bench_encode_single(c: &mut Criterion) {
 
     group.bench_function("short", |b| {
         let s = &sentences[0];
-        b.iter(|| ese::encode_single(std::hint::black_box(s)));
+        b.iter(|| encoders::encode_single(std::hint::black_box(s)));
     });
 
     let longest = sentences.iter().max_by_key(|s| s.len()).unwrap();
@@ -75,7 +76,7 @@ fn bench_encode_single(c: &mut Criterion) {
         BenchmarkId::new("longest", format!("{}chars", longest.len())),
         longest,
         |b, s| {
-            b.iter(|| ese::encode_single(std::hint::black_box(s)));
+            b.iter(|| encoders::encode_single(std::hint::black_box(s)));
         },
     );
 
@@ -88,17 +89,14 @@ fn bench_encode_batch(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("encode_batch");
 
-    for size in [
-        1, 16, 64, 256, 1000, 10_000, 65_536, 100_000,
-        // 256_000, 512_000, 768000, 1_000_000,
-    ] {
+    for size in [1, 16, 64, 256, 1000, 10_000, 65_536, 100_000, 1_000_000] {
         if size > n {
             continue;
         }
         let batch: Vec<_> = sentences[..size].to_vec();
         group.throughput(Throughput::Elements(size as u64));
         group.bench_with_input(BenchmarkId::from_parameter(size), &batch, |b, batch| {
-            b.iter(|| ese::encode(std::hint::black_box(batch.clone())));
+            b.iter(|| encoders::encode(std::hint::black_box(batch.iter())));
         });
     }
 
@@ -118,7 +116,7 @@ fn bench_encode_by_length(c: &mut Criterion) {
         let input: String = s.chars().take(char_len).collect();
         group.throughput(Throughput::Bytes(input.len() as u64));
         group.bench_with_input(BenchmarkId::new("chars", char_len), &input, |b, input| {
-            b.iter(|| ese::encode_single(std::hint::black_box(input)));
+            b.iter(|| encoders::encode_single(std::hint::black_box(input)));
         });
     }
     group.finish();

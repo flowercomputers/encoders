@@ -10,9 +10,9 @@ fn encode<'py>(py: Python<'py>, texts: Py<PyAny>) -> Bound<'py, numpy::PyArray2<
             .extract::<Vec<String>>(py)
             .expect("expected str or list of str")
     };
-    let vecs = ese_core::encode(texts);
+    let vecs = encoders::encode(texts);
     let rows = vecs.len();
-    let cols = ese_core::DIMENSIONS;
+    let cols = encoders::DIMENSIONS;
     let flat: Vec<f32> = vecs.into_iter().flatten().collect();
     numpy::PyArray1::from_vec(py, flat)
         .reshape([rows, cols])
@@ -21,13 +21,13 @@ fn encode<'py>(py: Python<'py>, texts: Py<PyAny>) -> Bound<'py, numpy::PyArray2<
 
 #[pyfunction]
 fn dimensions() -> usize {
-    ese_core::DIMENSIONS
+    encoders::DIMENSIONS
 }
 
 #[pymodule]
 fn ese(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(encode, m)?)?;
     m.add_function(wrap_pyfunction!(dimensions, m)?)?;
-    m.add("DIMENSIONS", ese_core::DIMENSIONS)?;
+    m.add("DIMENSIONS", encoders::DIMENSIONS)?;
     Ok(())
 }

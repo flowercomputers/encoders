@@ -1,0 +1,30 @@
+[package]
+name = "ese-unicode"
+# MAJOR.MINOR is the Unicode version the tables implement (Unicode's own
+# third component is always 0); PATCH is for changes to this crate within
+# that Unicode version. `tests/reference.rs` checks the tables agree.
+version = "17.0.0"
+edition = "2024"
+description = "Character classes and BERT-style normalization (NFD minus nonspacing marks, lowercasing) from compact precomputed tables (about 64 KB)"
+license = "Apache-2.0"
+repository = "https://github.com/flowercomputers/ese"
+keywords = ["unicode", "normalization", "tokenizer", "nlp"]
+categories = ["text-processing", "no-std"]
+
+[features]
+# The table generator (`cargo run -p ese-unicode --features gen --bin gen`).
+# The runtime has no dependencies; the generated `src/tables.rs` is checked
+# in and records the reference crate versions it was produced from.
+gen = ["dep:unicode-normalization", "dep:unicode-general-category"]
+
+[dependencies]
+unicode-normalization = { version = "=0.1.25", optional = true }
+unicode-general-category = { version = "=1.1.0", optional = true }
+
+[dev-dependencies]
+unicode-normalization = "=0.1.25"
+unicode-general-category = "=1.1.0"
+
+[[bin]]
+name = "gen"
+required-features = ["gen"]
