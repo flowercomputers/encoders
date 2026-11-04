@@ -1,4 +1,4 @@
-## Much faster text embedding preview
+## Embedded Static Embeddings
 
 This repo contains the static embedding model deployment pipeline described [here](https://www.flowercomputer.com/news/fast-static-embedding/): a sentence-transformers or model2vec static embedding model is fetched at build time, turned into a perfect-hash lookup table, and compiled straight into your binary. Encoding is a tokenizer pass plus a mean over table rows; nothing is loaded at runtime.
 
@@ -38,7 +38,7 @@ encoders = { path = "...", default-features = false, features = ["model-potion-b
 ```
 
 | feature | model | trained widths |
-|---|---|---|---|
+|---|---|---|
 | `model-static-retrieval-mrl-en-v1` | sentence-transformers/static-retrieval-mrl-en-v1 | 1024, 512, 256, 128, 64, 32 |
 | `model-static-similarity-mrl-multilingual-v1` | sentence-transformers/static-similarity-mrl-multilingual-v1 | 1024, 512, 256, 128, 64, 32 |
 | `model-bekko-static-embedding-v1` | hotchpotch/bekko-static-embedding-v1 (multilingual, 200k vocab, published as f16) | 1024, 512, 256, 128, 64, 32 |
