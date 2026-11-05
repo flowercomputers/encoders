@@ -17,109 +17,109 @@ const MRL: &[usize] = &[1024, 512, 256, 128, 64, 32];
 
 const CATALOG: &[ModelSpec] = &[
     ModelSpec {
-        feature: "model-bekko-static-v1-slim-100k",
+        feature: "bekko-static-v1-slim-100k",
         repo: "flower-computer/bekko-static-v1-slim-100k",
         revision: "635eb094a82ce43f0eb882c12b31406b3d93ec26",
         dims: MRL,
     },
     ModelSpec {
-        feature: "model-bekko-static-v1-slim-75k",
+        feature: "bekko-static-v1-slim-75k",
         repo: "flower-computer/bekko-static-v1-slim-75k",
         revision: "48d57794b1d6b94f4535817341e6f8bf2f5b31e2",
         dims: MRL,
     },
     ModelSpec {
-        feature: "model-bekko-static-v1-slim-50k",
+        feature: "bekko-static-v1-slim-50k",
         repo: "flower-computer/bekko-static-v1-slim-50k",
         revision: "63abf2b319526cc06cacf85bb86e2bfcd1b5f987",
         dims: MRL,
     },
     ModelSpec {
-        feature: "model-bekko-static-v1-slim-32k",
+        feature: "bekko-static-v1-slim-32k",
         repo: "flower-computer/bekko-static-v1-slim-32k",
         revision: "c4ce4db02b1e50d858745b40cb80da627e26ee4c",
         dims: MRL,
     },
     ModelSpec {
-        feature: "model-static-retrieval-mrl-en-v1",
-        repo: "sentence-transformers/static-retrieval-mrl-en-v1",
-        revision: "f60985c706f192d45d218078e49e5a8b6f15283a",
-        dims: MRL,
-    },
-    ModelSpec {
-        feature: "model-static-similarity-mrl-multilingual-v1",
-        repo: "sentence-transformers/static-similarity-mrl-multilingual-v1",
-        revision: "b68f4122911bcffcd6e1f695f2d99cd6788972d8",
-        dims: MRL,
-    },
-    ModelSpec {
-        feature: "model-bekko-static-embedding-v1",
+        feature: "bekko-static-embedding-v1",
         repo: "hotchpotch/bekko-static-embedding-v1",
         revision: "c18167b8f244c1bc6de21ce9b710bac8a29c4615",
         dims: MRL,
     },
     ModelSpec {
-        feature: "model-potion-base-2m",
+        feature: "static-retrieval-mrl-en-v1",
+        repo: "sentence-transformers/static-retrieval-mrl-en-v1",
+        revision: "f60985c706f192d45d218078e49e5a8b6f15283a",
+        dims: MRL,
+    },
+    ModelSpec {
+        feature: "similarity-mrl-multilingual-v1",
+        repo: "sentence-transformers/static-similarity-mrl-multilingual-v1",
+        revision: "b68f4122911bcffcd6e1f695f2d99cd6788972d8",
+        dims: MRL,
+    },
+    ModelSpec {
+        feature: "potion-base-2m",
         repo: "minishlab/potion-base-2M",
         revision: "389b9f64be5aa4ae7a6bc6fe95ef20ce485ae5da",
         dims: &[64],
     },
     ModelSpec {
-        feature: "model-potion-base-4m",
+        feature: "potion-base-4m",
         repo: "minishlab/potion-base-4M",
         revision: "9b3cff412d30be9ae8603fe10224c224f3401869",
         dims: &[128],
     },
     ModelSpec {
-        feature: "model-potion-base-8m",
+        feature: "potion-base-8m",
         repo: "minishlab/potion-base-8M",
         revision: "bf8b056651a2c21b8d2565580b8569da283cab23",
         dims: &[256],
     },
     ModelSpec {
-        feature: "model-potion-base-32m",
+        feature: "potion-base-32m",
         repo: "minishlab/potion-base-32M",
         revision: "1e5a03f8eeb2c98b928fbbd846f22f816360919f",
         dims: &[512],
     },
     ModelSpec {
-        feature: "model-potion-retrieval-32m",
+        feature: "potion-retrieval-32m",
         repo: "minishlab/potion-retrieval-32M",
         revision: "6fc8051fab2a1e0ee76689cf08c853792ac285e7",
         dims: &[512],
     },
     ModelSpec {
-        feature: "model-potion-science-8m",
+        feature: "potion-science-8m",
         repo: "minishlab/potion-science-8M",
         revision: "b186d1c45c8205d552a00f7a0979896ca2dc9e87",
         dims: &[256],
     },
     ModelSpec {
-        feature: "model-potion-science-32m",
+        feature: "potion-science-32m",
         repo: "minishlab/potion-science-32M",
         revision: "7366079845507de14a4330007cdfa01bb92bca52",
         dims: &[256],
     },
     ModelSpec {
-        feature: "model-potion-code-16m",
+        feature: "potion-code-16m",
         repo: "minishlab/potion-code-16M",
         revision: "1b0ff71095656b23306542bbad34a09109673720",
         dims: &[256],
     },
     ModelSpec {
-        feature: "model-nife-mxbai-embed-large-v1",
+        feature: "nife-mxbai-embed-large-v1",
         repo: "stephantulkens/NIFE-mxbai-embed-large-v1",
         revision: "970a0151f3faeddbab5c68be38d52bbc5ea719ab",
         dims: &[1024],
     },
     ModelSpec {
-        feature: "model-nife-gte-modernbert-base",
+        feature: "nife-gte-modernbert-base",
         repo: "stephantulkens/NIFE-gte-modernbert-base",
         revision: "9b85ba93d5a7729db11dfea90d20a5f392a88747",
         dims: &[768],
     },
     ModelSpec {
-        feature: "model-m2v-base-output",
+        feature: "m2v-base-output",
         repo: "minishlab/M2V_base_output",
         revision: "0b86653131492ba2a858911d5ccf84ae774b40f3",
         dims: &[256],
@@ -127,13 +127,13 @@ const CATALOG: &[ModelSpec] = &[
 ];
 
 const DIM_FEATURES: &[(&str, usize)] = &[
-    ("dim-1024", 1024),
-    ("dim-768", 768),
-    ("dim-512", 512),
-    ("dim-256", 256),
-    ("dim-128", 128),
-    ("dim-64", 64),
-    ("dim-32", 32),
+    ("mrl-1024", 1024),
+    ("mrl-768", 768),
+    ("mrl-512", 512),
+    ("mrl-256", 256),
+    ("mrl-128", 128),
+    ("mrl-64", 64),
+    ("mrl-32", 32),
 ];
 
 fn main() {
@@ -227,8 +227,8 @@ fn selected_dims(model: &ModelSpec) -> Option<usize> {
 }
 
 fn selected_quant() -> Quant {
-    match (feature_on("quant-8"), feature_on("quant-16")) {
-        (true, true) => panic!("encoders: quant-8 and quant-16 are mutually exclusive"),
+    match (feature_on("int8"), feature_on("int16")) {
+        (true, true) => panic!("encoders: int8 and int16 are mutually exclusive"),
         (true, false) => Quant::U8,
         (false, true) => Quant::U16,
         (false, false) => Quant::F32,

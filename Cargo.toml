@@ -27,43 +27,43 @@ codegen-units = 1
 lto = "fat"
 
 [features]
-default = ["quant-16"]
+default = ["int16"]
 
 # Exactly one model. Cargo features are additive, so to pick a non-default
 # model depend on this crate with `default-features = false`.
-model-bekko-static-v1-slim-100k = []
-model-bekko-static-v1-slim-75k = []
-model-bekko-static-v1-slim-50k = []
-model-bekko-static-v1-slim-32k = []
-model-static-retrieval-mrl-en-v1 = []
-model-static-similarity-mrl-multilingual-v1 = []
-model-bekko-static-embedding-v1 = []
-model-potion-base-2m = []
-model-potion-base-4m = []
-model-potion-base-8m = []
-model-potion-base-32m = []
-model-potion-retrieval-32m = []
-model-potion-science-8m = []
-model-potion-science-32m = []
-model-potion-code-16m = []
-model-nife-mxbai-embed-large-v1 = []
-model-nife-gte-modernbert-base = []
-model-m2v-base-output = []
+bekko-static-v1-slim-100k = []
+bekko-static-v1-slim-75k = []
+bekko-static-v1-slim-50k = []
+bekko-static-v1-slim-32k = []
+bekko-static-embedding-v1 = []
+static-retrieval-mrl-en-v1 = []
+static-similarity-mrl-multilingual-v1 = []
+potion-base-2m = []
+potion-base-4m = []
+potion-base-8m = []
+potion-base-32m = []
+potion-retrieval-32m = []
+potion-science-8m = []
+potion-science-32m = []
+potion-code-16m = []
+nife-mxbai-embed-large-v1 = []
+nife-gte-modernbert-base = []
+m2v-base-output = []
 
 # Truncation. Only the Matryoshka-trained sentence-transformers models accept
 # a width below their native 1024; the build fails otherwise.
-dim-1024 = []
-dim-768 = []
-dim-512 = []
-dim-256 = []
-dim-128 = []
-dim-64 = []
-dim-32 = []
+mrl-1024 = []
+mrl-768 = []
+mrl-512 = []
+mrl-256 = []
+mrl-128 = []
+mrl-64 = []
+mrl-32 = []
 
 # Storage: f32 when neither is set. Per-column affine quantization, summed in
 # integer lanes.
-quant-16 = []
-quant-8 = []
+int16 = []
+int8 = []
 
 rayon = ["ese/rayon"]
 # Generate reference embeddings with the `tokenizers` crate and compare
