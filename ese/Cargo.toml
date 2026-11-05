@@ -16,3 +16,4 @@ rayon = ["dep:rayon"]
 [dependencies]
 ese-unicode = { path = "../ese-unicode" }
 rayon = { version = "1", optional = true }
+aho-corasick = "1"

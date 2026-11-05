@@ -14,8 +14,9 @@ fn unknown<E: Elem, const D: usize>(
     pool: &mut Accumulator<E, D>,
     unk: Option<(&'static [E; D], u8)>,
 ) {
-    if let Some((row, exp)) = unk {
-        pool.add(row, exp);
+    match unk {
+        Some((row, exp)) => pool.add(row, exp),
+        None => pool.skip(),
     }
 }
 
@@ -53,7 +54,7 @@ pub fn wordpiece_accumulate<E, const D: usize, L>(
             unknown(pool, unk);
             return;
         }
-        WordKind::Literal => {
+        WordKind::Literal | WordKind::Phrase => {
             if word == cfg.unk_token {
                 unknown(pool, unk);
             } else if let Some((row, exp)) = lookup(phf::hash_key(word.as_bytes())) {
@@ -160,6 +161,7 @@ mod tests {
         special_tokens: &["[UNK]"],
         unk_token: "[UNK]",
         ascii: &ASCII,
+        hf: None,
     };
 
     /// Token ids the `tokenizers` algorithm produces, written the naive way.

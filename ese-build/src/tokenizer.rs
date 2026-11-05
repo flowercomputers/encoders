@@ -38,14 +38,51 @@ pub(crate) struct Spec {
     pub vocab: Vec<(String, usize)>,
     /// Contents of `added_tokens` entries flagged `special`.
     pub special_tokens: Vec<String>,
+    /// The normalizer runs gorp-code's identifier-splitting `Replace` steps
+    /// before `BertNormalizer`.
+    pub split_identifiers: bool,
+    /// Non-special added tokens flagged `normalized` and `single_word`,
+    /// matched on the normalized text (also present in `vocab`).
+    pub phrases: Vec<String>,
+    /// `truncation.max_length`, if the tokenizer truncates.
+    pub max_tokens: Option<usize>,
+    /// model2vec's `median_token_length` over the whole vocabulary, in code
+    /// points.
+    pub median_token_len: usize,
+}
+
+/// The identifier-splitting steps gorp-code puts before `BertNormalizer`,
+/// accepted only in exactly this form because the runtime hard-codes them.
+fn identifier_split_steps(steps: &[Value]) -> bool {
+    let replace = |v: &Value, kind: &str, pat: &str| {
+        v["type"].as_str() == Some("Replace")
+            && v["pattern"][kind].as_str() == Some(pat)
+            && v["content"].as_str() == Some(" ")
+    };
+    steps.len() == 3
+        && replace(&steps[0], "Regex", "(?<=[a-z0-9])(?=[A-Z])")
+        && replace(&steps[1], "Regex", "(?<=[A-Z])(?=[A-Z][a-z])")
+        && replace(&steps[2], "String", "_")
 }
 
 pub(crate) fn parse(path: &Path) -> Result<Spec, Error> {
     let tk = read_json(path)?;
 
+    // gorp-code: Sequence[Replace x3 (identifier splitting), BertNormalizer].
+    let mut split_identifiers = false;
+    let mut normalizer = &tk["normalizer"];
+    if normalizer["type"].as_str() == Some("Sequence")
+        && let Some(steps) = normalizer["normalizers"].as_array()
+        && steps.len() == 4
+        && identifier_split_steps(&steps[..3])
+    {
+        split_identifiers = true;
+        normalizer = &steps[3];
+    }
+
     // Normalizer: absent means identity; otherwise it must be a BertNormalizer,
     // possibly wrapped in a single-element Sequence.
-    let (lowercase, strip_accents, handle_chinese_chars, clean_text) = match &tk["normalizer"] {
+    let (lowercase, strip_accents, handle_chinese_chars, clean_text) = match normalizer {
         Value::Null => (false, false, false, false),
         n => {
             let n = unwrap_sequence(n, "normalizers");
@@ -125,6 +162,7 @@ pub(crate) fn parse(path: &Path) -> Result<Spec, Error> {
     // added tokens would alter ordinary text and are refused.
     let mut special_tokens = Vec::new();
     let mut approximated = Vec::new();
+    let mut phrases = Vec::new();
     for t in tk["added_tokens"].as_array().into_iter().flatten() {
         let content = t["content"].as_str().unwrap_or("").to_string();
         if content.is_empty() {
@@ -134,8 +172,21 @@ pub(crate) fn parse(path: &Path) -> Result<Spec, Error> {
         let special = flag("special");
         let normalized = t["normalized"].as_bool().unwrap_or(!special);
         if !special {
+            // Phrase tokens: matched on the normalized text at word
+            // boundaries. Their content must already be in normalized form
+            // and must not hold a newline (the runtime list is one per line).
+            if normalized && flag("single_word") && !flag("lstrip") && !flag("rstrip") && !content.contains('\n') {
+                let id = t["id"].as_u64().ok_or_else(|| {
+                    Error::Invalid(format!("added token {content:?} has no integer id"))
+                })? as usize;
+                if !vocab.iter().any(|(tok, _)| *tok == content) {
+                    vocab.push((content.clone(), id));
+                }
+                phrases.push(content);
+                continue;
+            }
             return Err(Error::UnsupportedTokenizer(format!(
-                "non-special added token {content:?}; only special added tokens are supported"
+                "non-special added token {content:?}; only special tokens and normalized single_word phrase tokens are supported"
             )));
         }
         if normalized || flag("single_word") || flag("lstrip") || flag("rstrip") {
@@ -151,6 +202,22 @@ pub(crate) fn parse(path: &Path) -> Result<Spec, Error> {
         );
     }
 
+    vocab.sort_by_key(|(_, id)| *id);
+    if !phrases.is_empty() && !lowercase {
+        return Err(Error::UnsupportedTokenizer(
+            "phrase tokens need a lowercasing normalizer (their content is matched as-is)".into(),
+        ));
+    }
+    let max_tokens = tk["truncation"]["max_length"].as_u64().map(|n| n as usize);
+    // model2vec: int(np.median([len(t) for t in vocab])), added tokens included.
+    let mut lens: Vec<usize> = vocab.iter().map(|(t, _)| t.chars().count()).collect();
+    lens.sort_unstable();
+    let median_token_len = match lens.len() {
+        0 => 0,
+        n if n % 2 == 1 => lens[n / 2],
+        n => (lens[n / 2 - 1] + lens[n / 2]) / 2,
+    };
+
     Ok(Spec {
         family: TokenizerFamily::BertWordPiece,
         lowercase,
@@ -163,6 +230,10 @@ pub(crate) fn parse(path: &Path) -> Result<Spec, Error> {
         unk_id,
         vocab,
         special_tokens,
+        split_identifiers,
+        phrases,
+        max_tokens,
+        median_token_len,
     })
 }
 

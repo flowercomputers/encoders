@@ -23,6 +23,7 @@ use core::mem::MaybeUninit;
 mod elem;
 
 pub mod accum;
+pub mod hf;
 pub mod phf;
 pub mod pretokenizer;
 pub mod wordpiece;
@@ -50,6 +51,9 @@ pub struct TokenizerConfig {
     /// Byte classes for the pre-tokenizer's ASCII fast path; must be built
     /// from the same flags and special tokens as the fields above.
     pub ascii: &'static pretokenizer::AsciiTable,
+    /// Identifier splitting and phrase tokens, for the tokenizers that have
+    /// them; `None` takes the allocation-free plain BERT path.
+    pub hf: Option<&'static hf::HfExtras>,
 }
 
 /// Everything `encode_single` needs besides the lookup table itself.
@@ -61,6 +65,9 @@ pub struct ModelParams<E: 'static, const D: usize> {
     pub drop_unk: bool,
     /// L2-normalize the pooled vector.
     pub normalize: bool,
+    /// Truncate to this many tokens (`tokenizer.json`'s `truncation`), counting
+    /// unknown tokens even when they are dropped; 0 for none.
+    pub max_tokens: usize,
     /// Per-column dequantization: `value = quant_min[i] + stored * quant_scale[i]`.
     /// Ignored for f32 rows.
     pub quant_min: &'static [f32; D],
@@ -100,15 +107,22 @@ pub fn encode_uninit<E, const D: usize, L>(
 {
     let mut slot = MaybeUninit::uninit();
     let pool = accum::Accumulator::<E, D>::init(&mut slot);
+    pool.set_limit(params.max_tokens);
     let unk = if params.drop_unk {
         None
     } else {
         Some((params.unk, params.unk_exp))
     };
 
-    pretokenizer::for_each_word(&params.tokenizer, text, |word, kind, hashes| {
-        wordpiece::wordpiece_accumulate(&params.tokenizer, word, kind, hashes, pool, lookup, unk);
-    });
+    let mut each = |word: &str, kind, hashes: &[u64]| {
+        if !pool.full() {
+            wordpiece::wordpiece_accumulate(&params.tokenizer, word, kind, hashes, pool, lookup, unk);
+        }
+    };
+    match params.tokenizer.hf {
+        None => pretokenizer::for_each_word(&params.tokenizer, text, &mut each),
+        Some(extras) => hf::for_each_word_hf(&params.tokenizer, extras, text, &mut each),
+    }
 
     pool.finish_into(out, params.quant_min, params.quant_scale, params.normalize);
 }
@@ -299,6 +313,12 @@ macro_rules! include_model {
             const ASCII: $crate::pretokenizer::AsciiTable =
                 $crate::pretokenizer::AsciiTable::new(CLEAN_TEXT, LOWERCASE, SPECIAL_TOKENS);
 
+            static HF: $crate::hf::HfExtras = $crate::hf::HfExtras::new(
+                SPLIT_IDENTIFIERS,
+                include_str!(concat!(env!("OUT_DIR"), "/phrases.txt")),
+                MAX_CHARS,
+            );
+
             pub static PARAMS: $crate::ModelParams<Elem, DIMENSIONS> = $crate::ModelParams {
                 tokenizer: $crate::TokenizerConfig {
                     lowercase: LOWERCASE,
@@ -311,9 +331,11 @@ macro_rules! include_model {
                     special_tokens: SPECIAL_TOKENS,
                     unk_token: UNK_TOKEN,
                     ascii: &ASCII,
+                    hf: if SPLIT_IDENTIFIERS || HAS_PHRASES { Some(&HF) } else { None },
                 },
                 drop_unk: DROP_UNK,
                 normalize: NORMALIZE,
+                max_tokens: MAX_TOKENS,
                 quant_min: &QUANT_MIN,
                 quant_scale: &QUANT_SCALE,
                 unk: &UNK,
