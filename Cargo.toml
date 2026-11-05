@@ -17,6 +17,7 @@ categories = [
     "science",
 ]
 build = "build.rs"
+exclude = ["benches/py/", ".github/", "todo.md"]
 
 [workspace]
 resolver = "2"
@@ -70,10 +71,10 @@ rayon = ["ese/rayon"]
 tests = ["ese-build/test-data"]
 
 [dependencies]
-ese = { path = "ese" }
+ese = { version = "0.1.0", path = "ese" }
 
 [build-dependencies]
-ese-build = { path = "ese-build" }
+ese-build = { version = "0.1.0", path = "ese-build" }
 
 [dev-dependencies]
 criterion = { version = "0", features = ["html_reports"] }

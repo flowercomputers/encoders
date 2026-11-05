@@ -2,7 +2,7 @@
 
 # encoders
 
-The encoders crate is the **fastest way to embed text** on CPU.[^1] We take [a collection of state-of-the-art static embedding models](#configuration-and-model-selection), and compile them directly into Rust code. That means no downloading models at runtime, no GPU, no inference runtime, no Python... just nanosecond scale text embedding!
+The encoders crate is the **fastest way to semantically embed text** on CPU.[^1] We take [a collection of state-of-the-art static embedding models](#configuration-and-model-selection), and compile them directly into Rust code. That means no downloading models at runtime, no GPU, no inference runtime, no Python... just nanosecond scale text embedding! <!-- TODO: [Read our article all about it here!](https://flowercomputers.com/) -->
 
 ```rust
 let query = encoders::encode_single("What is the capital of France?");
@@ -36,7 +36,9 @@ encoders = { version = "1", features = ["bekko-static-v1-slim-32k", "mrl-256", "
 - **Storage.** `int16` is the default, as they're indistinguishable from f32 in practice at half the size. `int8` is a quarter the size and the fastest, with cosine agreement against f32 above 0.999 on multi-token text.
 - **`rayon`** makes `encode` parallel for large batches.
 
-### bekko models (recommended)
+### bekko models
+
+![](.github/quality-vs-vocab.png)
 
 The model [hotchpotch/bekko-static-embedding-v1](https://huggingface.co/hotchpotch/bekko-static-embedding-v1) represents the current state-of-the-art as far as static embedding. We've trained a family of models derived from this model to shrink the vocabulary (and thus the model size), specifically for use in encoders. These are multilingual models, trained with MRL so their vectors can be truncated (reducing vector and model size at the cost of embedding quality), and licensed MIT.
 
@@ -100,7 +102,7 @@ Our smallest model, `bekko-static-v1-slim-32k`, covers English, Arabic, German, 
 <details>
 <summary><b>Potion models</b></summary>
 
-Distilled by [MinishLab](https://github.com/MinishLab) with [model2vec](https://github.com/MinishLab/model2vec): English only, licensed MIT.
+Small, quick models distilled by [MinishLab](https://github.com/MinishLab) with their [model2vec](https://github.com/MinishLab/model2vec) process: English only, licensed MIT.
 
 <table>
   <thead>
@@ -245,6 +247,8 @@ Otherwise, check out the [`ese-build`](./ese-build) and [`ese`](./ese) crates, w
 
 The idea behind encoders (and the crate that underpins it, [`ese`](./ese)) is simple: static embedding models are essentially lookup tables from token IDs to weights. Why not just resolve the tokens to their weights with a compile-time map? So, that's exactly what it does—with a lot of other performance-oriented tricks to boot!
 
+<!-- TODO: ![PRETTY CHARTS HERE]() -->
+
 The workspace has four crates. `encoders` is the one above. [`ese`](./ese) is the runtime: a byte-for-byte reimplementation of the BERT tokenizer pipeline, mean pooling in integer lanes, and a perfect-hash table over the vocabulary. [`ese-build`](./ese-build) runs in [`build.rs`](./build.rs): it fetches a model, works out how it is laid out and how it expects to be pooled from its own files, quantizes it, and writes the tables. [`ese-unicode`](./ese-unicode) is the 64 KB of Unicode tables the tokenizer needs, generated from pinned crates and checked in.
 
 ### Caveats emptor
@@ -257,6 +261,4 @@ The workspace has four crates. `encoders` is the one above. [`ese`](./ese) is th
 
 The code in this repo is licensed Apache-2.0. However, each model has its own license, which you must respect; it is available at build time in the summary and at run time as `encoders::model::LICENSE`.
 
-[^1]: Any person wishing to dispute this claim is required to either:
-1. challenge us to hand-to-hand combat at the our office in Brooklyn, New York, _OR_
-2. create an issue on this repository referencing relevant benchmarks.
+[^1]: Any person wishing to dispute this claim is required to either: challenge us to hand-to-hand combat at our office in Brooklyn, New York, _OR_ create an issue on this repository referencing relevant benchmarks.

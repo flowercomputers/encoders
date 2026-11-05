@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 description = "build.rs support for ese: fetch a sentence-transformers or model2vec static embedding model and generate its compiled-in tables"
 license = "Apache-2.0"
-repository = "https://github.com/flowercomputers/ese"
+repository = "https://github.com/flowercomputers/encoders"
 
 [features]
 # Also generate reference outputs (computed with the `tokenizers` crate) for
@@ -12,7 +12,7 @@ repository = "https://github.com/flowercomputers/ese"
 test-data = ["dep:tokenizers"]
 
 [dependencies]
-ese = { path = "../ese" }
+ese = { version = "0.1.0", path = "../ese" }
 serde_json = "1"
 minreq = { version = "2", features = ["https-native"] }
 tokenizers = { version = "0", optional = true }

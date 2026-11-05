@@ -7,7 +7,7 @@ version = "17.0.0"
 edition = "2024"
 description = "Character classes and BERT-style normalization (NFD minus nonspacing marks, lowercasing) from compact precomputed tables (about 64 KB)"
 license = "Apache-2.0"
-repository = "https://github.com/flowercomputers/ese"
+repository = "https://github.com/flowercomputers/encoders"
 keywords = ["unicode", "normalization", "tokenizer", "nlp"]
 categories = ["text-processing", "no-std"]
 

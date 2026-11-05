@@ -6,7 +6,7 @@ description = "Extremely Static Embeddings: runtime for compiled-in static embed
 license = "Apache-2.0"
 authors = ["W. Turner Abney <wta@ieee.org>"]
 homepage = "https://github.com/flowercomputers/ese"
-repository = "https://github.com/flowercomputers/ese"
+repository = "https://github.com/flowercomputers/encoders"
 keywords = ["embeddings", "model2vec", "nlp", "search"]
 categories = ["text-processing", "artificial-intelligence", "compression", "encoding", "science"]
 
@@ -14,5 +14,5 @@ categories = ["text-processing", "artificial-intelligence", "compression", "enco
 rayon = ["dep:rayon"]
 
 [dependencies]
-ese-unicode = { path = "../ese-unicode" }
+ese-unicode = { version = "17.0.0", path = "../ese-unicode" }
 rayon = { version = "1", optional = true }
