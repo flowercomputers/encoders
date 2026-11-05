@@ -61,6 +61,9 @@ pub struct ModelParams<E: 'static, const D: usize> {
     pub drop_unk: bool,
     /// L2-normalize the pooled vector.
     pub normalize: bool,
+    /// Truncate to this many tokens (`tokenizer.json`'s `truncation`), counting
+    /// unknown tokens even when they are dropped; 0 for none.
+    pub max_tokens: usize,
     /// Per-column dequantization: `value = quant_min[i] + stored * quant_scale[i]`.
     /// Ignored for f32 rows.
     pub quant_min: &'static [f32; D],
@@ -100,6 +103,7 @@ pub fn encode_uninit<E, const D: usize, L>(
 {
     let mut slot = MaybeUninit::uninit();
     let pool = accum::Accumulator::<E, D>::init(&mut slot);
+    pool.set_limit(params.max_tokens);
     let unk = if params.drop_unk {
         None
     } else {
@@ -107,7 +111,9 @@ pub fn encode_uninit<E, const D: usize, L>(
     };
 
     pretokenizer::for_each_word(&params.tokenizer, text, |word, kind, hashes| {
-        wordpiece::wordpiece_accumulate(&params.tokenizer, word, kind, hashes, pool, lookup, unk);
+        if !pool.full() {
+            wordpiece::wordpiece_accumulate(&params.tokenizer, word, kind, hashes, pool, lookup, unk);
+        }
     });
 
     pool.finish_into(out, params.quant_min, params.quant_scale, params.normalize);
@@ -314,6 +320,7 @@ macro_rules! include_model {
                 },
                 drop_unk: DROP_UNK,
                 normalize: NORMALIZE,
+                max_tokens: MAX_TOKENS,
                 quant_min: &QUANT_MIN,
                 quant_scale: &QUANT_SCALE,
                 unk: &UNK,

@@ -14,8 +14,9 @@ fn unknown<E: Elem, const D: usize>(
     pool: &mut Accumulator<E, D>,
     unk: Option<(&'static [E; D], u8)>,
 ) {
-    if let Some((row, exp)) = unk {
-        pool.add(row, exp);
+    match unk {
+        Some((row, exp)) => pool.add(row, exp),
+        None => pool.skip(),
     }
 }
 

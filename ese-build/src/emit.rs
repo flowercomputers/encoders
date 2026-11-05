@@ -133,7 +133,10 @@ pub const MAX_WORD_LEN: usize = {max_word_len};
 /// Bytes in the longest vocabulary entry, without the subword prefix.
 pub const MAX_TOKEN_BYTES: usize = {max_token_bytes};
 pub const SPECIAL_TOKENS: &[&str] = &{specials:?};
+/// Truncation from `tokenizer.json` (0 for none).
+pub const MAX_TOKENS: usize = {max_tokens};
 "#,
+        max_tokens = spec.max_tokens.unwrap_or(0),
         model_id = e.model_id,
         revision = e.revision,
         dims = e.dims,
