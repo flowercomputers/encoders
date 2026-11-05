@@ -2,88 +2,108 @@
 
 # encoders
 
-Crate `encoders` is the fastest way to embed 
+Text embeddings compiled into your binary. No model files to ship, nothing to load at startup, no Python. A sentence goes in, a fixed-width `[f32; DIMENSIONS]` comes out in well under a microsecond.
 
 ```rust
-let v = encoders::encode_single("hello world");
-let batch = encoders::encode(["potato", "root vegetable"]);
+let query = encoders::encode_single("What is the capital of France?");
+let docs = encoders::encode(["Paris is the capital of France.", "Tokyo is the capital of Japan."]);
+
+for (doc, text) in docs.iter().zip(["Paris...", "Tokyo..."]) {
+    println!("{:.3}  {text}", encoders::similarity(&query, doc));
+}
 ```
 
-`encode` encodes a batch, in parallel for batches of 128 or more when the `rayon` feature is on. `encode_single` encodes one string; `encode_into` writes one embedding into caller-provided storage.
+```console
+$ cargo add encoders --features bekko-static-v1-slim-32k,mrl-256,int8
+```
 
-### Choosing a model
+## What it costs
 
-Every model in the catalog is selectable with a feature of the same name. With no model feature the default is `flower-computer/bekko-static-v1-slim-75k`. Widths are `mrl-*` features and storage is `float32`, `int16` (the default feature) or `int8`; an explicit `float32` or `int8` overrides the default:
+**Quality.** These are static embeddings: each token has one fixed vector and a text is the mean of its tokens' vectors. There is no attention, so word order and context are invisible, and quality is a step below transformer encoders. On retrieval benchmarks the gap is real but not enormous; the bekko family scores about 49 to 54 NanoBEIR against the low 60s for a small transformer. In exchange a text costs a few hundred nanoseconds instead of a few milliseconds, with no GPU, no runtime dependencies and no startup. For a lot of search, dedup, clustering and routing work that is the right trade, and we hope the speed makes up for the rest.
+
+**Binary size and compile time.** The model's table is embedded in your executable: from a few MB for a small model at a narrow width to a few hundred MB for a large vocabulary at full width in f32. The build summary prints the exact figure as `embedded=`. Any embedding model needs its weights at runtime somehow; this crate just puts them in the binary rather than next to it. The first build of a model also downloads it from the Hugging Face hub (into `target/ese-cache`) and the final link of a large table takes a while.
+
+## Choosing a model
+
+Every model is a cargo feature named after it, plus optional features for width and storage:
 
 ```toml
-encoders = { features = ["bekko-static-v1-slim-32k", "mrl-256", "int8", "rayon"] }
+[dependencies]
+encoders = { version = "1", features = ["bekko-static-v1-slim-32k", "mrl-256", "int8", "rayon"] }
 ```
 
-| feature                                 | model                                                                             | trained widths                                        |
-| --------------------------------------- | --------------------------------------------------------------------------------- | ----------------------------------------------------- |
-| `bekko-static-v1-slim-100k`             | flower-computer/bekko-static-v1-slim-100k (25 languages, 100k vocab, f16)         | 1024, 512, 256, 128, 64, 32                           |
-| `bekko-static-v1-slim-75k` (default)    | flower-computer/bekko-static-v1-slim-75k (25 languages, 75k vocab, f16)           | 1024, 512, 256, 128, 64, 32                           |
-| `bekko-static-v1-slim-50k`              | flower-computer/bekko-static-v1-slim-50k (25 languages, 50k vocab, f16)           | 1024, 512, 256, 128, 64, 32                           |
-| `bekko-static-v1-slim-32k`              | flower-computer/bekko-static-v1-slim-32k (14 languages, 32k vocab, f16)           | 1024, 512, 256, 128, 64, 32                           |
-| `bekko-static-embedding-v1`             | hotchpotch/bekko-static-embedding-v1 (40 languages, 200k vocab, f16)              | 1024, 512, 256, 128, 64, 32                           |
-| `static-retrieval-mrl-en-v1`            | sentence-transformers/static-retrieval-mrl-en-v1                                  | 1024, 512, 256, 128, 64, 32                           |
-| `static-similarity-mrl-multilingual-v1` | sentence-transformers/static-similarity-mrl-multilingual-v1                       | 1024, 512, 256, 128, 64, 32                           |
-| `potion-base-2m`                        | minishlab/potion-base-2M                                                          | 64                                                    |
-| `potion-base-4m`                        | minishlab/potion-base-4M                                                          | 128                                                   |
-| `potion-base-8m`                        | minishlab/potion-base-8M                                                          | 256                                                   |
-| `potion-base-32m`                       | minishlab/potion-base-32M                                                         | 512                                                   |
-| `potion-retrieval-32m`                  | minishlab/potion-retrieval-32M                                                    | 512                                                   |
-| `potion-science-8m`                     | minishlab/potion-science-8M                                                       | 256                                                   |
-| `potion-science-32m`                    | minishlab/potion-science-32M                                                      | 256                                                   |
-| `potion-code-16m`                       | minishlab/potion-code-16M                                                         | 256 (ships per-token weights, use `int16` or `float32`) |
-| `nife-mxbai-embed-large-v1`             | stephantulkens/NIFE-mxbai-embed-large-v1                                          | 1024                                                  |
-| `nife-gte-modernbert-base`              | stephantulkens/NIFE-gte-modernbert-base                                           | 768                                                   |
-| `m2v-base-output`                       | minishlab/M2V_base_output                                                         | 256                                                   |
+- **Model.** Exactly one model feature. With none enabled you get the current default, `bekko-static-v1-slim-75k`. **The default may change between major versions.** If you store embeddings, name a model feature explicitly: that pins the model and its commit, so engine updates cannot silently change your vectors.
+- **Width.** `mrl-1024` down to `mrl-32` truncates a Matryoshka-trained model to one of the widths it was trained at. Omit it for the model's native width. Asking a model for a width it was not trained at fails the build with the list of widths it was.
+- **Storage.** `int16` is the default and the fallback: 16-bit integers, indistinguishable from f32 in practice, half the size. `int8` is a quarter the size and the fastest, with cosine agreement against f32 above 0.999 on multi-token text. `float32` keeps the weights exactly as published. An explicit `float32` or `int8` overrides the default `int16`; `int8` and `float32` together is an error.
+- **`rayon`** makes `encode` parallel for batches of `PARALLEL_MIN` texts or more.
 
-The `bekko-static-v1-slim` family is vocabulary-pruned from `bekko-static-embedding-v1`: same embedding space, 32k to 100k of its 200k WordPiece tokens, chosen by expected retrieval damage and lightly self-distilled; see the [collection](https://huggingface.co/collections/flower-computer/bekko-static-v1-slim). Each entry is pinned to a commit sha in `build.rs` together with the widths it was trained at; those are also exposed as `encoders::model::TRUNCATION_POINTS`, `NATIVE_DIMENSIONS` and `MATRYOSHKA`. The build fails with a clear message if more than one model is enabled, or if an `mrl-*` feature asks for a width the model was not trained at. Only the unquantized upstream weights are used; quantization is done here. `potion-multilingual-128M` is not in the catalog because its Unigram tokenizer is not supported by the runtime.
+### bekko-static-v1 (recommended)
 
-#### Storage and truncation
+Our models, derived from [hotchpotch/bekko-static-embedding-v1](https://huggingface.co/hotchpotch/bekko-static-embedding-v1): the same embedding space with the vocabulary pruned to the tokens that matter most for the covered languages, then lightly self-distilled. Smaller vocabularies mean smaller binaries and a little less quality. All are Matryoshka-trained at 1024, 512, 256, 128, 64 and 32 dimensions, uncased, MIT licensed. Numbers are nDCG@10 at 1024 dimensions from the [collection](https://huggingface.co/collections/flower-computer/bekko-static-v1-slim).
 
-`int16` and `int8` store the table as 16- or 8-bit integers with a separate affine range per dimension and a per-row power-of-two exponent, so small-norm rows (an untrained `[UNK]`, down-weighted frequent tokens) keep their resolution. Rows are summed in integer lanes and dequantized once per embedding, so integer tables are also faster and read half (or a quarter) of the bytes. `float32` keeps the weights as they are. `mrl-*` truncates Matryoshka models to one of their trained widths; see the table above.
+| feature                              | vocab | languages | NanoBEIR-en | MNanoBEIR |
+| ------------------------------------ | ----: | --------: | ----------: | --------: |
+| `bekko-static-embedding-v1`          |  200k |        40 |        53.7 |      43.7 |
+| `bekko-static-v1-slim-100k`          |  100k |        25 |        52.9 |      43.0 |
+| `bekko-static-v1-slim-75k` (default) |   75k |        25 |        52.1 |      42.2 |
+| `bekko-static-v1-slim-50k`           |   50k |        25 |        50.2 |      40.4 |
+| `bekko-static-v1-slim-32k`           |   32k |        14 |        49.3 |      39.9 |
 
-### Compiling in a different model
+The slim members cover English, Arabic, German, Spanish, French, Italian, Japanese, Korean, Norwegian, Portuguese, Serbian, Swedish, Thai and Vietnamese, and the 50k and larger ones eleven more. Text in other languages tokenizes to characters or `[UNK]`.
 
-For a model outside the catalog, copy this crate's `build.rs` into your own crate; the whole integration is one `Builder` call in `build.rs`:
+<details>
+<summary><b>sentence-transformers static models</b></summary>
 
-```rust
-let summary = ese_build::Builder::hub("sentence-transformers/static-retrieval-mrl-en-v1")
-    .revision("main")
-    .dims(Some(256))
-    .quant(ese_build::Quant::U8)
-    .generate(&out_dir)?;
-println!("cargo:warning={summary}");
-```
+Trained by the sentence-transformers team with Matryoshka loss at 1024, 512, 256, 128, 64 and 32. Apache-2.0.
 
-and `lib.rs` is just `ese::include_model!();`. The summary line names the model, what was detected, and how many bytes of tables the crate embeds, which is what the model adds to your final binary.
+| feature                                 | model                                                                                                                                             | notes                                                    |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| `static-retrieval-mrl-en-v1`            | [sentence-transformers/static-retrieval-mrl-en-v1](https://huggingface.co/sentence-transformers/static-retrieval-mrl-en-v1)                       | English, tuned for retrieval                             |
+| `static-similarity-mrl-multilingual-v1` | [sentence-transformers/static-similarity-mrl-multilingual-v1](https://huggingface.co/sentence-transformers/static-similarity-mrl-multilingual-v1) | multilingual, tuned for similarity rather than retrieval |
 
-`ese-build` reads everything else from the model's own files:
+</details>
 
-| detected                                                                             | from                                                                             |
-| ------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------- |
-| where the weights and tokenizer live                                                 | `modules.json`, path of the `StaticEmbedding` module                             |
-| L2-normalize the output                                                              | a `Normalize` module in `modules.json`, else `config.json`'s `normalize`         |
-| drop `[UNK]` before pooling                                                          | `config.json` says `model_type: model2vec` (sentence-transformers keeps the row) |
-| embedding tensor                                                                     | `embedding.weight`, `embeddings`, `0`, or the only 2-D tensor                    |
-| vocabulary quantization                                                              | the optional `mapping` and `weights` tensors                                     |
-| lowercase, accent stripping, CJK padding, subword prefix, max word length, unk token | `tokenizer.json`                                                                 |
+<details>
+<summary><b>potion (MinishLab)</b></summary>
 
-Models with a tokenizer other than `BertNormalizer` + `BertPreTokenizer` + `WordPiece` (for example `potion-multilingual-128M`, which is Unigram) fail the build with a message naming what was found. Any module in `modules.json` other than `StaticEmbedding` and `Normalize` is rejected as not static.
+Distilled with model2vec: small, fast, English only, not Matryoshka-trained, so each is used at its native width. Outputs are unit length. MIT.
 
-Downloads are cached under `target/ese-cache/<repo>/<revision>` and shared by every consumer in the workspace.
+| feature                | model                                                                                   | native width | notes                                                             |
+| ---------------------- | --------------------------------------------------------------------------------------- | -----------: | ----------------------------------------------------------------- |
+| `potion-base-2m`       | [minishlab/potion-base-2M](https://huggingface.co/minishlab/potion-base-2M)             |           64 | general purpose                                                   |
+| `potion-base-4m`       | [minishlab/potion-base-4M](https://huggingface.co/minishlab/potion-base-4M)             |          128 | general purpose                                                   |
+| `potion-base-8m`       | [minishlab/potion-base-8M](https://huggingface.co/minishlab/potion-base-8M)             |          256 | general purpose                                                   |
+| `potion-base-32m`      | [minishlab/potion-base-32M](https://huggingface.co/minishlab/potion-base-32M)           |          512 | general purpose, larger vocabulary                                |
+| `potion-retrieval-32m` | [minishlab/potion-retrieval-32M](https://huggingface.co/minishlab/potion-retrieval-32M) |          512 | tuned for retrieval                                               |
+| `potion-science-8m`    | [minishlab/potion-science-8M](https://huggingface.co/minishlab/potion-science-8M)       |          256 | scientific text                                                   |
+| `potion-science-32m`   | [minishlab/potion-science-32M](https://huggingface.co/minishlab/potion-science-32M)     |          256 | scientific text, larger vocabulary                                |
+| `potion-code-16m`      | [minishlab/potion-code-16M](https://huggingface.co/minishlab/potion-code-16M)           |          256 | source code; ships per-token weights, so use `int16` or `float32` |
+| `m2v-base-output`      | [minishlab/M2V_base_output](https://huggingface.co/minishlab/M2V_base_output)           |          256 | the original model2vec release, superseded by potion              |
 
-### Fidelity against the reference implementation
+</details>
 
-Both sentence-transformers' `StaticEmbedding` and model2vec tokenize with `add_special_tokens=false` and mean-pool, so no `[CLS]`/`[SEP]` rows are ever added. `cargo test --features tests` has `ese-build` compute reference embeddings with the `tokenizers` crate under the detected policy and compares `encode_single` against them. Special tokens typed literally into the input (`"[SEP]"`) are matched the same way `tokenizers` does: on the raw text, before normalization, as single tokens.
+<details>
+<summary><b>NIFE (Nearly Inference Free Embeddings)</b></summary>
 
-### Benchmarks
+Static models aligned with a transformer teacher, so an index built with the teacher can be queried with the static model. English, native width only, unit-length outputs. MIT.
 
-`cargo bench` compares against `model2vec-rs` on the same model. The NanoBEIR quality benchmarks in [`./benches/py`](./benches/py) run through the Python wheel.
+| feature                     | model                                                                                                       | native width | teacher                            |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------- | -----------: | ---------------------------------- |
+| `nife-mxbai-embed-large-v1` | [stephantulkens/NIFE-mxbai-embed-large-v1](https://huggingface.co/stephantulkens/NIFE-mxbai-embed-large-v1) |         1024 | mixedbread-ai/mxbai-embed-large-v1 |
+| `nife-gte-modernbert-base`  | [stephantulkens/NIFE-gte-modernbert-base](https://huggingface.co/stephantulkens/NIFE-gte-modernbert-base)   |          768 | Alibaba-NLP/gte-modernbert-base    |
 
-### Model licenses
+</details>
 
-The sentence-transformers static models are Apache-2.0; the MinishLab potion and M2V models, the NIFE models and bekko are MIT. This repository is Apache-2.0.
+Each model is pinned to a commit in `build.rs`. The crate's tests compare its output against the reference implementation (the `tokenizers` crate plus sentence-transformers' pooling) for every model.
+
+## Licensing
+
+The code in this repo is licensed Apache-2.0. However, each model has its own license, which you must respect; it is available at build time in the summary and at run time as `encoders::model::LICENSE`.
+
+## Under the hood
+
+The workspace has four crates. `encoders` is the one above. `ese` is the runtime: a byte-for-byte reimplementation of the BERT tokenizer pipeline, mean pooling in integer lanes, and a perfect-hash table over the vocabulary. `ese-build` runs in `build.rs`: it fetches a model, works out how it is laid out and how it expects to be pooled from its own files, quantizes it, and writes the tables. `ese-unicode` is the 64 KB of Unicode tables the tokenizer needs, generated from pinned crates and checked in.
+
+To compile in a model outside the catalog, copy this crate's `build.rs` and point `ese_build::Builder::hub` at any sentence-transformers or model2vec static model with a BERT WordPiece tokenizer; `lib.rs` is just `ese::include_model!();`.
+
+Benchmarks: `cargo bench` compares against `model2vec-rs` on the same model; the retrieval quality harness in [`benches/py`](./benches/py) runs through the Python wheel in [`api-py`](./api-py).

@@ -27,7 +27,7 @@ codegen-units = 1
 lto = "fat"
 
 [features]
-default = ["int16"]
+default = []
 
 # Exactly one model. Cargo features are additive, so to pick a non-default
 # model depend on this crate with `default-features = false`.
