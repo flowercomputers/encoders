@@ -15,7 +15,7 @@ readme rewrite:
   - NIFE compatible with teacher model, potion-code is a code model, some aren't multilingual, etc.
   - bekko-static-v1-xx models are ours (and recommended) and in the same fam as the bekko model
   - non-bekko-static-xx families should live in twisty-dropdowns just to keep it cleaner
-- we may (and probably will) change the default model between major versions!
+- we may (and probably will) change the default model / quantization / etc between major versions!
   - must specify a specific model feature to benefit from engine changes without breaking embedding compatibility
 - licensing: crate encoders, ese etc are dual Apache/MIT, but every model has its own license you must respect, available as a const in the models module
 

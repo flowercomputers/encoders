@@ -219,8 +219,7 @@ where
 /// - `pub fn encode(impl IntoIterator<Item: AsRef<str> + Send + Sync>) -> Vec<[f32; DIMENSIONS]>`;
 /// - `pub const PARALLEL_MIN: usize`, the batch size from which `encode` goes
 ///   parallel with the `rayon` feature;
-/// - `similarity` / `distance` on two embeddings, and `compare` /
-///   `compare_each` on texts.
+/// - `similarity` / `distance` on two embeddings.
 #[macro_export]
 macro_rules! include_model {
     () => {
@@ -368,23 +367,6 @@ macro_rules! include_model {
         #[inline]
         pub fn distance(a: &[f32; DIMENSIONS], b: &[f32; DIMENSIONS]) -> f32 {
             $crate::similarity::euclidean(a, b)
-        }
-
-        /// [`similarity`] of two texts.
-        pub fn compare(a: impl AsRef<str>, b: impl AsRef<str>) -> f32 {
-            similarity(&encode_single(a), &encode_single(b))
-        }
-
-        /// [`similarity`] of one text to each of several, in order.
-        pub fn compare_each(
-            query: impl AsRef<str>,
-            candidates: impl IntoIterator<Item = impl AsRef<str> + Send + Sync>,
-        ) -> Vec<f32> {
-            let q = encode_single(query);
-            encode(candidates)
-                .iter()
-                .map(|c| similarity(&q, c))
-                .collect()
         }
     };
 }

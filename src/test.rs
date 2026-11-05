@@ -79,16 +79,6 @@ fn metadata_and_comparison_helpers() {
     assert!((crate::similarity(&a, &b) - crate::similarity(&b, &a)).abs() < 1e-6);
     assert!(crate::similarity(&a, &b) > crate::similarity(&a, &c));
     assert!(crate::distance(&a, &b) < crate::distance(&a, &c));
-    assert!(
-        (crate::compare("the cat sat on the mat", "the cat sat on the mat") - 1.0).abs() < 1e-4
-    );
-    let s = crate::compare_each(
-        "the cat sat on the mat",
-        ["a cat is sitting on a mat", "quarterly revenue guidance"],
-    );
-    assert_eq!(s.len(), 2);
-    assert!(s[0] > s[1]);
-    assert!((s[0] - crate::similarity(&a, &b)).abs() < 1e-6);
 }
 
 #[test]
