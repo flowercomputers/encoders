@@ -29,6 +29,9 @@ pub enum WordKind {
     Overlong,
     /// A special token matched literally on the raw input: one exact lookup.
     Literal,
+    /// A phrase token matched on the normalized text (see `hf`): one exact
+    /// lookup.
+    Phrase,
 }
 
 /// Bytes of stack reserved for one normalized word. Must hold
@@ -330,6 +333,7 @@ mod tests {
         special_tokens: SPECIALS,
         unk_token: "[UNK]",
         ascii: &AsciiTable::new(true, true, SPECIALS),
+        hf: None,
     };
 
     fn words(cfg: &TokenizerConfig, s: &str) -> Vec<(String, WordKind)> {

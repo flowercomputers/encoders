@@ -23,6 +23,7 @@ use core::mem::MaybeUninit;
 mod elem;
 
 pub mod accum;
+pub mod hf;
 pub mod phf;
 pub mod pretokenizer;
 pub mod wordpiece;
@@ -50,6 +51,9 @@ pub struct TokenizerConfig {
     /// Byte classes for the pre-tokenizer's ASCII fast path; must be built
     /// from the same flags and special tokens as the fields above.
     pub ascii: &'static pretokenizer::AsciiTable,
+    /// Identifier splitting and phrase tokens, for the tokenizers that have
+    /// them; `None` takes the allocation-free plain BERT path.
+    pub hf: Option<&'static hf::HfExtras>,
 }
 
 /// Everything `encode_single` needs besides the lookup table itself.
@@ -110,11 +114,23 @@ pub fn encode_uninit<E, const D: usize, L>(
         Some((params.unk, params.unk_exp))
     };
 
-    pretokenizer::for_each_word(&params.tokenizer, text, |word, kind, hashes| {
+    let mut each = |word: &str, kind, hashes: &[u64]| {
         if !pool.full() {
-            wordpiece::wordpiece_accumulate(&params.tokenizer, word, kind, hashes, pool, lookup, unk);
+            wordpiece::wordpiece_accumulate(
+                &params.tokenizer,
+                word,
+                kind,
+                hashes,
+                pool,
+                lookup,
+                unk,
+            );
         }
-    });
+    };
+    match params.tokenizer.hf {
+        None => pretokenizer::for_each_word(&params.tokenizer, text, &mut each),
+        Some(extras) => hf::for_each_word_hf(&params.tokenizer, extras, text, &mut each),
+    }
 
     pool.finish_into(out, params.quant_min, params.quant_scale, params.normalize);
 }
@@ -305,6 +321,12 @@ macro_rules! include_model {
             const ASCII: $crate::pretokenizer::AsciiTable =
                 $crate::pretokenizer::AsciiTable::new(CLEAN_TEXT, LOWERCASE, SPECIAL_TOKENS);
 
+            static HF: $crate::hf::HfExtras = $crate::hf::HfExtras::new(
+                SPLIT_IDENTIFIERS,
+                include_str!(concat!(env!("OUT_DIR"), "/phrases.txt")),
+                MAX_CHARS,
+            );
+
             pub static PARAMS: $crate::ModelParams<Elem, DIMENSIONS> = $crate::ModelParams {
                 tokenizer: $crate::TokenizerConfig {
                     lowercase: LOWERCASE,
@@ -317,6 +339,11 @@ macro_rules! include_model {
                     special_tokens: SPECIAL_TOKENS,
                     unk_token: UNK_TOKEN,
                     ascii: &ASCII,
+                    hf: if SPLIT_IDENTIFIERS || HAS_PHRASES {
+                        Some(&HF)
+                    } else {
+                        None
+                    },
                 },
                 drop_unk: DROP_UNK,
                 normalize: NORMALIZE,
