@@ -169,7 +169,7 @@ const CATALOG: &[ModelSpec] = &[
 ];
 
 /// Used when no model feature is enabled.
-const DEFAULT_MODEL: &str = "bekko-static-v1-slim-75k";
+const DEFAULT_MODEL: &str = "bekko-static-v1-slim-50k";
 
 const DIM_FEATURES: &[(&str, usize)] = &[
     ("mrl-1024", 1024),
