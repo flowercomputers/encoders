@@ -16,21 +16,20 @@ for (doc, text) in docs.iter().zip(["Paris...", "Tokyo..."]) {
 You can also configure encoders with a number of crate features for model selection, quantization, Matryoshka truncation (depending on a model's support for it), and parallelization (via [rayon](https://github.com/rayon-rs/rayon)).
 
 ```console
-# defaults to bekko-static-v1-slim-50k, int16 quantization
 $ cargo add encoders
 $ cargo add encoders --features='potion-retrieval-32m, int8, mrl-256, rayon'
 ```
 
 ## Configuration and model selection
 
+> [!WARNING]
+> If you store embeddings from this crate, select a model feature explicitly: that pins the model so that crate updates cannot silently change your vectors.
+> _**We will change the default model as the state of the art changes!**_
+
 ```toml
 [dependencies]
 encoders = { version = "1", features = ["bekko-static-v1-slim-32k", "mrl-256", "int8", "rayon"] }
 ```
-
-> [!WARNING]
-> If you store embeddings from this crate, select a model feature explicitly: that pins the model so that crate updates cannot silently change your vectors.
-> _**We will change the default model as the state of the art changes!**_
 
 - **Model.** With none enabled you get the current default, `bekko-static-v1-slim-50k`.
 - **Width.** `mrl-1024` down to `mrl-32` truncates a Matryoshka-trained model to one of the widths it was trained at. Omit it for the model's native width; asking for a width a model was not trained at fails the build!
@@ -39,17 +38,62 @@ encoders = { version = "1", features = ["bekko-static-v1-slim-32k", "mrl-256", "
 
 ### bekko models (recommended)
 
-The model [hotchpotch/bekko-static-embedding-v1](https://huggingface.co/hotchpotch/bekko-static-embedding-v1) represents the current state-of-the-art as far as static embedding. We've trained a family of models derived from this model to shrink the vocabulary (and thus the model size), specifically for use in encoders.
+The model [hotchpotch/bekko-static-embedding-v1](https://huggingface.co/hotchpotch/bekko-static-embedding-v1) represents the current state-of-the-art as far as static embedding. We've trained a family of models derived from this model to shrink the vocabulary (and thus the model size), specifically for use in encoders. These are multilingual models, trained with MRL so their vectors can be truncated (reducing vector and model size at the cost of embedding quality), and licensed MIT.
 
-These are multilingual models, and trained with MRL so their vectors can be truncated (reducing vector and model size at the cost of embedding quality). Licensed MIT.
-
-| feature                                                                                                     | vocab | languages | NanoBEIR-en | MNanoBEIR | size int8 / int16 / f32 |
-| ----------------------------------------------------------------------------------------------------------- | ----: | --------: | ----------: | --------: | ----------------------: |
-| [`bekko-static-embedding-v1`](https://huggingface.co/hotchpotch/bekko-static-embedding-v1)                  |  200k |        40 |        53.7 |      43.7 |    258 / 514 / 1026 MiB |
-| [`bekko-static-v1-slim-100k`](https://huggingface.co/flower-computer/bekko-static-v1-slim-100k)             |  100k |        25 |        52.9 |      43.0 |     129 / 257 / 513 MiB |
-| [`bekko-static-v1-slim-75k`](https://huggingface.co/flower-computer/bekko-static-v1-slim-75k)               |   75k |        25 |        52.1 |      42.2 |     129 / 257 / 513 MiB |
-| [**`bekko-static-v1-slim-50k`**](https://huggingface.co/flower-computer/bekko-static-v1-slim-50k) (default) |   50k |        25 |        50.2 |      40.4 |  65 / **129** / 257 MiB |
-| [`bekko-static-v1-slim-32k`](https://huggingface.co/flower-computer/bekko-static-v1-slim-32k)               |   32k |        14 |        49.3 |      39.9 |       32 / 64 / 128 MiB |
+<table>
+  <thead>
+    <tr>
+      <th>feature</th>
+      <th align="right">vocab</th>
+      <th align="right">languages</th>
+      <th align="right">NanoBEIR-en</th>
+      <th align="right">MNanoBEIR</th>
+      <th align="right">size int8 / int16 / f32</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><a href="https://huggingface.co/hotchpotch/bekko-static-embedding-v1"><code>bekko-static-embedding-v1</code></a></td>
+      <td align="right">200k</td>
+      <td align="right">40</td>
+      <td align="right">53.7</td>
+      <td align="right">43.7</td>
+      <td align="right">258 / 514 / 1026 MiB</td>
+    </tr>
+    <tr>
+      <td><a href="https://huggingface.co/flower-computer/bekko-static-v1-slim-100k"><code>bekko-static-v1-slim-100k</code></a></td>
+      <td align="right">100k</td>
+      <td align="right">25</td>
+      <td align="right">52.9</td>
+      <td align="right">43.0</td>
+      <td align="right">129 / 257 / 513 MiB</td>
+    </tr>
+    <tr>
+      <td><a href="https://huggingface.co/flower-computer/bekko-static-v1-slim-75k"><code>bekko-static-v1-slim-75k</code></a></td>
+      <td align="right">75k</td>
+      <td align="right">25</td>
+      <td align="right">52.1</td>
+      <td align="right">42.2</td>
+      <td align="right">129 / 257 / 513 MiB</td>
+    </tr>
+    <tr>
+      <td><a href="https://huggingface.co/flower-computer/bekko-static-v1-slim-50k"><b><code>bekko-static-v1-slim-50k</code></b></a> (default)</td>
+      <td align="right">50k</td>
+      <td align="right">25</td>
+      <td align="right">50.2</td>
+      <td align="right">40.4</td>
+      <td align="right">65 / <b>129</b> / 257 MiB</td>
+    </tr>
+    <tr>
+      <td><a href="https://huggingface.co/flower-computer/bekko-static-v1-slim-32k"><code>bekko-static-v1-slim-32k</code></a></td>
+      <td align="right">32k</td>
+      <td align="right">14</td>
+      <td align="right">49.3</td>
+      <td align="right">39.9</td>
+      <td align="right">32 / 64 / 128 MiB</td>
+    </tr>
+  </tbody>
+</table>
 
 Our smallest model, `bekko-static-v1-slim-32k`, covers English, Arabic, German, Spanish, French, Italian, Japanese, Korean, Norwegian, Portuguese, Serbian, Swedish, Thai, Vietnamese. The larger models also support Bengali, Persian, Finnish, Hindi, Indonesian, Dutch, Russian, Swahili, Telugu, Yoruba, and Chinese.
 
@@ -58,17 +102,72 @@ Our smallest model, `bekko-static-v1-slim-32k`, covers English, Arabic, German, 
 
 Distilled by [MinishLab](https://github.com/MinishLab) with [model2vec](https://github.com/MinishLab/model2vec): English only, licensed MIT.
 
-| feature                | model                                                                                   | native width | notes                                                             | size int8 / int16 / f32 |
-| ---------------------- | --------------------------------------------------------------------------------------- | -----------: | ----------------------------------------------------------------- | ----------------------: |
-| `potion-base-2m`       | [minishlab/potion-base-2M](https://huggingface.co/minishlab/potion-base-2M)             |           64 | general purpose                                                   |     2.3 / 4.3 / 8.3 MiB |
-| `potion-base-4m`       | [minishlab/potion-base-4M](https://huggingface.co/minishlab/potion-base-4M)             |          128 | general purpose                                                   |      4.3 / 8.3 / 16 MiB |
-| `potion-base-8m`       | [minishlab/potion-base-8M](https://huggingface.co/minishlab/potion-base-8M)             |          256 | general purpose                                                   |       8.3 / 16 / 32 MiB |
-| `potion-base-32m`      | [minishlab/potion-base-32M](https://huggingface.co/minishlab/potion-base-32M)           |          512 | general purpose, larger vocabulary                                |       33 / 65 / 129 MiB |
-| `potion-retrieval-32m` | [minishlab/potion-retrieval-32M](https://huggingface.co/minishlab/potion-retrieval-32M) |          512 | tuned for retrieval                                               |       33 / 65 / 129 MiB |
-| `potion-science-8m`    | [minishlab/potion-science-8M](https://huggingface.co/minishlab/potion-science-8M)       |          256 | scientific text                                                   |       8.3 / 16 / 32 MiB |
-| `potion-science-32m`   | [minishlab/potion-science-32M](https://huggingface.co/minishlab/potion-science-32M)     |          256 | scientific text, larger vocabulary                                |       33 / 65 / 129 MiB |
-| `potion-code-16m`      | [minishlab/potion-code-16M](https://huggingface.co/minishlab/potion-code-16M)           |          256 | source code; ships per-token weights, so use `int16` or `float32` |        17 / 33 / 65 MiB |
-| `m2v-base-output`      | [minishlab/M2V_base_output](https://huggingface.co/minishlab/M2V_base_output)           |          256 | the original model2vec release, superseded by potion              |       8.3 / 16 / 32 MiB |
+<table>
+  <thead>
+    <tr>
+      <th>feature</th>
+      <th align="right">native width</th>
+      <th>notes</th>
+      <th align="right">size int8 / int16 / f32</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><a href="https://huggingface.co/minishlab/potion-base-2M"><code>potion-base-2m</code></a></td>
+      <td align="right">64</td>
+      <td>general purpose</td>
+      <td align="right">2.3 / 4.3 / 8.3 MiB</td>
+    </tr>
+    <tr>
+      <td><a href="https://huggingface.co/minishlab/potion-base-4M"><code>potion-base-4m</code></a></td>
+      <td align="right">128</td>
+      <td>general purpose</td>
+      <td align="right">4.3 / 8.3 / 16 MiB</td>
+    </tr>
+    <tr>
+      <td><a href="https://huggingface.co/minishlab/potion-base-8M"><code>potion-base-8m</code></a></td>
+      <td align="right">256</td>
+      <td>general purpose</td>
+      <td align="right">8.3 / 16 / 32 MiB</td>
+    </tr>
+    <tr>
+      <td><a href="https://huggingface.co/minishlab/potion-base-32M"><code>potion-base-32m</code></a></td>
+      <td align="right">512</td>
+      <td>general purpose, larger vocabulary</td>
+      <td align="right">33 / 65 / 129 MiB</td>
+    </tr>
+    <tr>
+      <td><a href="https://huggingface.co/minishlab/potion-retrieval-32M"><code>potion-retrieval-32m</code></a></td>
+      <td align="right">512</td>
+      <td>tuned for retrieval</td>
+      <td align="right">33 / 65 / 129 MiB</td>
+    </tr>
+    <tr>
+      <td><a href="https://huggingface.co/minishlab/potion-science-8M"><code>potion-science-8m</code></a></td>
+      <td align="right">256</td>
+      <td>scientific text</td>
+      <td align="right">8.3 / 16 / 32 MiB</td>
+    </tr>
+    <tr>
+      <td><a href="https://huggingface.co/minishlab/potion-science-32M"><code>potion-science-32m</code></a></td>
+      <td align="right">256</td>
+      <td>scientific text, larger vocabulary</td>
+      <td align="right">33 / 65 / 129 MiB</td>
+    </tr>
+    <tr>
+      <td><a href="https://huggingface.co/minishlab/potion-code-16M"><code>potion-code-16m</code></a></td>
+      <td align="right">256</td>
+      <td>source code; ships per-token weights, so use <code>int16</code> or <code>float32</code></td>
+      <td align="right">17 / 33 / 65 MiB</td>
+    </tr>
+    <tr>
+      <td><a href="https://huggingface.co/minishlab/M2V_base_output"><code>m2v-base-output</code></a></td>
+      <td align="right">256</td>
+      <td>the original model2vec release, superseded by potion</td>
+      <td align="right">8.3 / 16 / 32 MiB</td>
+    </tr>
+  </tbody>
+</table>
 
 </details>
 
@@ -77,10 +176,27 @@ Distilled by [MinishLab](https://github.com/MinishLab) with [model2vec](https://
 
 Trained by the [sentence-transformers](https://sbert.net) team with Matryoshka loss (see their [write-up](https://huggingface.co/blog/static-embeddings)), licensed Apache-2.0.
 
-| feature                                 | model                                                                                                                                             | notes                                                    | size int8 / int16 / f32 |
-| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- | ----------------------: |
-| `static-retrieval-mrl-en-v1`            | [sentence-transformers/static-retrieval-mrl-en-v1](https://huggingface.co/sentence-transformers/static-retrieval-mrl-en-v1)                       | English, tuned for retrieval                             |       32 / 64 / 128 MiB |
-| `static-similarity-mrl-multilingual-v1` | [sentence-transformers/static-similarity-mrl-multilingual-v1](https://huggingface.co/sentence-transformers/static-similarity-mrl-multilingual-v1) | multilingual, tuned for similarity rather than retrieval |     129 / 257 / 513 MiB |
+<table>
+  <thead>
+    <tr>
+      <th>feature</th>
+      <th>notes</th>
+      <th align="right">size int8 / int16 / f32</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><a href="https://huggingface.co/sentence-transformers/static-retrieval-mrl-en-v1"><code>static-retrieval-mrl-en-v1</code></a></td>
+      <td>English, tuned for retrieval</td>
+      <td align="right">32 / 64 / 128 MiB</td>
+    </tr>
+    <tr>
+      <td><a href="https://huggingface.co/sentence-transformers/static-similarity-mrl-multilingual-v1"><code>static-similarity-mrl-multilingual-v1</code></a></td>
+      <td>multilingual, tuned for similarity rather than retrieval</td>
+      <td align="right">129 / 257 / 513 MiB</td>
+    </tr>
+  </tbody>
+</table>
 
 </details>
 
@@ -89,10 +205,30 @@ Trained by the [sentence-transformers](https://sbert.net) team with Matryoshka l
 
 Static models aligned with a transformer teacher, so an index built with the teacher can be queried with the static model. English language only, licensed MIT.
 
-| feature                     | model                                                                                                       | native width | teacher                                                                                         | size int8 / int16 / f32 |
-| --------------------------- | ----------------------------------------------------------------------------------------------------------- | -----------: | ----------------------------------------------------------------------------------------------- | ----------------------: |
-| `nife-mxbai-embed-large-v1` | [stephantulkens/NIFE-mxbai-embed-large-v1](https://huggingface.co/stephantulkens/NIFE-mxbai-embed-large-v1) |         1024 | [mixedbread-ai/mxbai-embed-large-v1](https://huggingface.co/mixedbread-ai/mxbai-embed-large-v1) |     129 / 257 / 513 MiB |
-| `nife-gte-modernbert-base`  | [stephantulkens/NIFE-gte-modernbert-base](https://huggingface.co/stephantulkens/NIFE-gte-modernbert-base)   |          768 | [Alibaba-NLP/gte-modernbert-base](https://huggingface.co/Alibaba-NLP/gte-modernbert-base)       |      97 / 193 / 385 MiB |
+<table>
+  <thead>
+    <tr>
+      <th>feature</th>
+      <th align="right">native width</th>
+      <th>teacher</th>
+      <th align="right">size int8 / int16 / f32</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><a href="https://huggingface.co/stephantulkens/NIFE-mxbai-embed-large-v1"><code>nife-mxbai-embed-large-v1</code></a></td>
+      <td align="right">1024</td>
+      <td><a href="https://huggingface.co/mixedbread-ai/mxbai-embed-large-v1">mixedbread-ai/mxbai-embed-large-v1</a></td>
+      <td align="right">129 / 257 / 513 MiB</td>
+    </tr>
+    <tr>
+      <td><a href="https://huggingface.co/stephantulkens/NIFE-gte-modernbert-base"><code>nife-gte-modernbert-base</code></a></td>
+      <td align="right">768</td>
+      <td><a href="https://huggingface.co/Alibaba-NLP/gte-modernbert-base">Alibaba-NLP/gte-modernbert-base</a></td>
+      <td align="right">97 / 193 / 385 MiB</td>
+    </tr>
+  </tbody>
+</table>
 
 </details>
 
@@ -121,4 +257,6 @@ The workspace has four crates. `encoders` is the one above. [`ese`](./ese) is th
 
 The code in this repo is licensed Apache-2.0. However, each model has its own license, which you must respect; it is available at build time in the summary and at run time as `encoders::model::LICENSE`.
 
-[^1]: Any person wishing to dispute this claim is invited to challenge us to hand-to-hand combat at the our office in Brooklyn, New York, _OR_ create an issue on this repository referencing relevant benchmarks.
+[^1]: Any person wishing to dispute this claim is required to either:
+1. challenge us to hand-to-hand combat at the our office in Brooklyn, New York, _OR_
+2. create an issue on this repository referencing relevant benchmarks.
