@@ -215,6 +215,8 @@ fn truncation_and_clamping() {
     assert_eq!((s.dims, s.native_dims), (2, 4));
     assert!(constants(&d.out()).contains("pub const UNK: Param = [2.0, 2.0];"));
     assert!(constants(&d.out()).contains("pub const TRUNCATION_POINTS: &[usize] = &[];"));
+    assert!(constants(&d.out()).contains("pub const LICENSE: Option<&str> = None;"));
+    assert!(constants(&d.out()).contains("pub const PARALLEL_MIN: usize = 128;"));
     // wider than the model is an error
     assert!(matches!(
         Builder::local(&d.0).dims(Some(64)).generate(&d.out()),
@@ -224,10 +226,16 @@ fn truncation_and_clamping() {
     let s = Builder::local(&d.0)
         .dims(Some(2))
         .truncation_points(Some(&[4, 2]))
+        .license("MIT")
+        .multilingual(true)
+        .parallel_min(7)
         .generate(&d.out())
         .unwrap();
     assert_eq!(s.truncation_points, [4, 2]);
     let c = constants(&d.out());
+    assert!(c.contains("pub const LICENSE: Option<&str> = Some(\"MIT\");"));
+    assert!(c.contains("pub const MULTILINGUAL: bool = true;"));
+    assert!(c.contains("pub const PARALLEL_MIN: usize = 7;"));
     assert!(c.contains("pub const NATIVE_DIMENSIONS: usize = 4;"));
     assert!(c.contains("pub const TRUNCATION_POINTS: &[usize] = &[4, 2];"));
     assert!(c.contains("pub const MATRYOSHKA: bool = true;"));

@@ -9,38 +9,42 @@ let v = encoders::encode_single("hello world");
 let batch = encoders::encode(["potato", "root vegetable"]);
 ```
 
-`encode` encodes a batch, in parallel for batches of 64 or more when the `rayon` feature is on. `encode_single` encodes one string; `encode_into` writes one embedding into caller-provided storage.
+`encode` encodes a batch, in parallel for batches of 128 or more when the `rayon` feature is on. `encode_single` encodes one string; `encode_into` writes one embedding into caller-provided storage.
 
 ### Choosing a model
 
-The default is `sentence-transformers/static-retrieval-mrl-en-v1` truncated to 512 dimensions and stored 8-bit. Every model in the catalog is selectable with a `model-*` feature. Cargo features are additive, so to pick another model turn the defaults off and enable exactly one model, optionally a `dim-*` feature, and optionally a `quant-*` feature:
+Every model in the catalog is selectable with a feature of the same name. With no model feature the default is `flower-computer/bekko-static-v1-slim-75k`. Widths are `mrl-*` features and storage is `float32`, `int16` (the default feature) or `int8`; an explicit `float32` or `int8` overrides the default:
 
 ```toml
-encoders = { default-features = false, features = ["model-potion-base-8m", "quant-8", "rayon"] }
+encoders = { features = ["bekko-static-v1-slim-32k", "mrl-256", "int8", "rayon"] }
 ```
 
-| feature                                       | model                                                                             | trained widths                                       |
-| --------------------------------------------- | --------------------------------------------------------------------------------- | ---------------------------------------------------- |
-| `model-static-retrieval-mrl-en-v1`            | sentence-transformers/static-retrieval-mrl-en-v1                                  | 1024, 512, 256, 128, 64, 32                          |
-| `model-static-similarity-mrl-multilingual-v1` | sentence-transformers/static-similarity-mrl-multilingual-v1                       | 1024, 512, 256, 128, 64, 32                          |
-| `model-bekko-static-embedding-v1`             | hotchpotch/bekko-static-embedding-v1 (multilingual, 200k vocab, published as f16) | 1024, 512, 256, 128, 64, 32                          |
-| `model-potion-base-2m`                        | minishlab/potion-base-2M                                                          | 64                                                   |
-| `model-potion-base-4m`                        | minishlab/potion-base-4M                                                          | 128                                                  |
-| `model-potion-base-8m`                        | minishlab/potion-base-8M                                                          | 256                                                  |
-| `model-potion-base-32m`                       | minishlab/potion-base-32M                                                         | 512                                                  |
-| `model-potion-retrieval-32m`                  | minishlab/potion-retrieval-32M                                                    | 512                                                  |
-| `model-potion-science-8m`                     | minishlab/potion-science-8M                                                       | 256                                                  |
-| `model-potion-science-32m`                    | minishlab/potion-science-32M                                                      | 256                                                  |
-| `model-potion-code-16m`                       | minishlab/potion-code-16M                                                         | 256 (ships per-token weights, use `quant-16` or f32) |
-| `model-nife-mxbai-embed-large-v1`             | stephantulkens/NIFE-mxbai-embed-large-v1                                          | 1024                                                 |
-| `model-nife-gte-modernbert-base`              | stephantulkens/NIFE-gte-modernbert-base                                           | 768                                                  |
-| `model-m2v-base-output`                       | minishlab/M2V_base_output                                                         | 256                                                  |
+| feature                                 | model                                                                             | trained widths                                        |
+| --------------------------------------- | --------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| `bekko-static-v1-slim-100k`             | flower-computer/bekko-static-v1-slim-100k (25 languages, 100k vocab, f16)         | 1024, 512, 256, 128, 64, 32                           |
+| `bekko-static-v1-slim-75k` (default)    | flower-computer/bekko-static-v1-slim-75k (25 languages, 75k vocab, f16)           | 1024, 512, 256, 128, 64, 32                           |
+| `bekko-static-v1-slim-50k`              | flower-computer/bekko-static-v1-slim-50k (25 languages, 50k vocab, f16)           | 1024, 512, 256, 128, 64, 32                           |
+| `bekko-static-v1-slim-32k`              | flower-computer/bekko-static-v1-slim-32k (14 languages, 32k vocab, f16)           | 1024, 512, 256, 128, 64, 32                           |
+| `bekko-static-embedding-v1`             | hotchpotch/bekko-static-embedding-v1 (40 languages, 200k vocab, f16)              | 1024, 512, 256, 128, 64, 32                           |
+| `static-retrieval-mrl-en-v1`            | sentence-transformers/static-retrieval-mrl-en-v1                                  | 1024, 512, 256, 128, 64, 32                           |
+| `static-similarity-mrl-multilingual-v1` | sentence-transformers/static-similarity-mrl-multilingual-v1                       | 1024, 512, 256, 128, 64, 32                           |
+| `potion-base-2m`                        | minishlab/potion-base-2M                                                          | 64                                                    |
+| `potion-base-4m`                        | minishlab/potion-base-4M                                                          | 128                                                   |
+| `potion-base-8m`                        | minishlab/potion-base-8M                                                          | 256                                                   |
+| `potion-base-32m`                       | minishlab/potion-base-32M                                                         | 512                                                   |
+| `potion-retrieval-32m`                  | minishlab/potion-retrieval-32M                                                    | 512                                                   |
+| `potion-science-8m`                     | minishlab/potion-science-8M                                                       | 256                                                   |
+| `potion-science-32m`                    | minishlab/potion-science-32M                                                      | 256                                                   |
+| `potion-code-16m`                       | minishlab/potion-code-16M                                                         | 256 (ships per-token weights, use `int16` or `float32`) |
+| `nife-mxbai-embed-large-v1`             | stephantulkens/NIFE-mxbai-embed-large-v1                                          | 1024                                                  |
+| `nife-gte-modernbert-base`              | stephantulkens/NIFE-gte-modernbert-base                                           | 768                                                   |
+| `m2v-base-output`                       | minishlab/M2V_base_output                                                         | 256                                                   |
 
-Each entry is pinned to a commit sha in `build.rs` together with the widths it was trained at; those are also exposed as `encoders::model::TRUNCATION_POINTS`, `NATIVE_DIMENSIONS` and `MATRYOSHKA`. The build fails with a clear message if no model or more than one is enabled, or if a `dim-*` feature asks for a width the model was not trained at. Only the unquantized upstream weights are used; quantization is done here. `potion-multilingual-128M` is not in the catalog because its Unigram tokenizer is not supported by the runtime.
+The `bekko-static-v1-slim` family is vocabulary-pruned from `bekko-static-embedding-v1`: same embedding space, 32k to 100k of its 200k WordPiece tokens, chosen by expected retrieval damage and lightly self-distilled; see the [collection](https://huggingface.co/collections/flower-computer/bekko-static-v1-slim). Each entry is pinned to a commit sha in `build.rs` together with the widths it was trained at; those are also exposed as `encoders::model::TRUNCATION_POINTS`, `NATIVE_DIMENSIONS` and `MATRYOSHKA`. The build fails with a clear message if more than one model is enabled, or if an `mrl-*` feature asks for a width the model was not trained at. Only the unquantized upstream weights are used; quantization is done here. `potion-multilingual-128M` is not in the catalog because its Unigram tokenizer is not supported by the runtime.
 
-#### Quantization and truncation
+#### Storage and truncation
 
-`quant-8` and `quant-16` store the table as 8- or 16-bit integers with a separate affine range per dimension and a per-row power-of-two exponent, so small-norm rows (an untrained `[UNK]`, down-weighted frequent tokens) keep their resolution. Rows are summed in integer lanes, one bin per exponent, and dequantized once per embedding, so quantized builds are also faster and read a quarter (or half) of the bytes. With neither feature the table is f32. `dim-*` truncates Matryoshka models to one of their trained widths; see the table above.
+`int16` and `int8` store the table as 16- or 8-bit integers with a separate affine range per dimension and a per-row power-of-two exponent, so small-norm rows (an untrained `[UNK]`, down-weighted frequent tokens) keep their resolution. Rows are summed in integer lanes and dequantized once per embedding, so integer tables are also faster and read half (or a quarter) of the bytes. `float32` keeps the weights as they are. `mrl-*` truncates Matryoshka models to one of their trained widths; see the table above.
 
 ### Compiling in a different model
 

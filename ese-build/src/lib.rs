@@ -157,6 +157,9 @@ pub struct Builder {
     test_data: bool,
     cache_dir: Option<PathBuf>,
     truncation: Option<Vec<usize>>,
+    license: Option<String>,
+    multilingual: bool,
+    parallel_min: usize,
 }
 
 impl Builder {
@@ -182,6 +185,9 @@ impl Builder {
             test_data: false,
             cache_dir: None,
             truncation: None,
+            license: None,
+            multilingual: false,
+            parallel_min: 128,
         }
     }
 
@@ -217,6 +223,27 @@ impl Builder {
     /// default) means unknown. Emitted as `TRUNCATION_POINTS`.
     pub fn truncation_points(mut self, points: Option<&[usize]>) -> Self {
         self.truncation = points.map(|p| p.to_vec());
+        self
+    }
+
+    /// The model's license as an SPDX identifier, emitted as `LICENSE`. Not
+    /// in the model's files in any reliable form, so the caller's knowledge.
+    pub fn license(mut self, spdx: impl Into<String>) -> Self {
+        self.license = Some(spdx.into());
+        self
+    }
+
+    /// Whether the model targets more than one language, emitted as
+    /// `MULTILINGUAL`. Defaults to `false`.
+    pub fn multilingual(mut self, multilingual: bool) -> Self {
+        self.multilingual = multilingual;
+        self
+    }
+
+    /// Batch size from which the consumer's `encode` goes parallel with the
+    /// `rayon` feature, emitted as `PARALLEL_MIN`. Defaults to 128.
+    pub fn parallel_min(mut self, n: usize) -> Self {
+        self.parallel_min = n.max(1);
         self
     }
 
@@ -283,7 +310,7 @@ impl Builder {
                 });
             println!(
                 "cargo:warning=ese-build: {} applies per-token weights spanning {lo:.3}..{hi:.3}; \
-                 8-bit per-column quantization loses precision on its frequent tokens. Prefer quant-16 or f32.",
+                 8-bit per-column quantization loses precision on its frequent tokens. Prefer 16-bit or f32 storage.",
                 match &self.source {
                     Source::Hub { repo, .. } => repo.as_str(),
                     Source::Local(_) => "this model",
@@ -314,6 +341,9 @@ impl Builder {
             revision: &revision,
             native_dims,
             truncation_points: &truncation_points,
+            license: self.license.as_deref(),
+            multilingual: self.multilingual,
+            parallel_min: self.parallel_min,
         })?;
 
         #[cfg(feature = "test-data")]

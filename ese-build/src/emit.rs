@@ -26,6 +26,9 @@ pub(crate) struct Emit<'a> {
     /// Widths the model was trained at, empty if truncation is unsupported
     /// or unknown.
     pub truncation_points: &'a [usize],
+    pub license: Option<&'a str>,
+    pub multilingual: bool,
+    pub parallel_min: usize,
 }
 
 /// What the test-data generator needs to reproduce the quantization error.
@@ -108,6 +111,12 @@ pub const NATIVE_DIMENSIONS: usize = {native_dims};
 /// unsupported or unknown.
 pub const TRUNCATION_POINTS: &[usize] = &{trunc:?};
 pub const MATRYOSHKA: bool = {matryoshka};
+/// SPDX identifier of the model's license, as declared to ese-build.
+pub const LICENSE: Option<&str> = {license:?};
+/// Whether the model targets more than one language, as declared to ese-build.
+pub const MULTILINGUAL: bool = {multilingual};
+/// Batch size from which `encode` goes parallel with the `rayon` feature.
+pub const PARALLEL_MIN: usize = {parallel_min};
 pub const VOCAB_SIZE: usize = {vocab_size};
 pub type Elem = {elem};
 pub type Param = [Elem; DIMENSIONS];
@@ -140,6 +149,9 @@ pub const SPECIAL_TOKENS: &[&str] = &{specials:?};
         native_dims = e.native_dims,
         trunc = e.truncation_points,
         matryoshka = e.truncation_points.iter().any(|&d| d < e.native_dims),
+        license = e.license,
+        multilingual = e.multilingual,
+        parallel_min = e.parallel_min,
         vocab_size = spec.vocab.len(),
         elem = e.quant.elem_name(),
         table_size = phf.table_size,

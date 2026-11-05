@@ -8,8 +8,8 @@ name = "ese"
 crate-type = ["cdylib"]
 
 [dependencies]
-# Default model: static-retrieval-mrl-en-v1 at 512 dims, 8-bit. Set
-# `default-features = false` and pick model-*/dim-*/quant-* features to change it.
+# Default model: bekko-static-v1-slim-75k at 1024 dims, 16-bit. Add a model
+# feature, an mrl-* width or float32/int8 to change it.
 encoders = { path = "..", features = ["rayon"] }
 numpy = "0.28.0"
 pyo3 = { version = "0", features = ["extension-module"] }

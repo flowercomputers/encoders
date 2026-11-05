@@ -1,11 +1,11 @@
 //! A static embedding model compiled into the binary.
 //!
-//! Which model is chosen with a `model-*` cargo feature (default:
-//! `sentence-transformers/static-retrieval-mrl-en-v1`, truncated to 512
-//! dimensions, 8-bit). The model is fetched and turned into lookup tables by
-//! `build.rs` using `ese-build`; this file only asks `ese` to include the
-//! result. See the crate's `Cargo.toml` for the catalog and the `dim-*` and
-//! `quant-*` knobs.
+//! Which model is chosen with a cargo feature named after it (default:
+//! `flower-computer/bekko-static-v1-slim-75k` at its native 1024 dimensions,
+//! stored as 16-bit integers). The model is fetched and turned into lookup
+//! tables by `build.rs` using `ese-build`; this file only asks `ese` to
+//! include the result. See the crate's `Cargo.toml` for the catalog, the
+//! `mrl-*` widths and the `float32` / `int16` / `int8` storage features.
 //!
 //! ```
 //! let v = encoders::encode_single("hello world");

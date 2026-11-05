@@ -68,6 +68,30 @@ fn known_token_resolves_and_unknown_does_not() {
 }
 
 #[test]
+fn metadata_and_comparison_helpers() {
+    assert!(crate::model::LICENSE.is_some());
+    let _: bool = crate::model::MULTILINGUAL;
+    assert_eq!(crate::PARALLEL_MIN, 128);
+    let a = crate::encode_single("the cat sat on the mat");
+    let b = crate::encode_single("a cat is sitting on a mat");
+    let c = crate::encode_single("quarterly revenue guidance");
+    assert!((crate::similarity(&a, &a) - 1.0).abs() < 1e-4);
+    assert!((crate::similarity(&a, &b) - crate::similarity(&b, &a)).abs() < 1e-6);
+    assert!(crate::similarity(&a, &b) > crate::similarity(&a, &c));
+    assert!(crate::distance(&a, &b) < crate::distance(&a, &c));
+    assert!(
+        (crate::compare("the cat sat on the mat", "the cat sat on the mat") - 1.0).abs() < 1e-4
+    );
+    let s = crate::compare_each(
+        "the cat sat on the mat",
+        ["a cat is sitting on a mat", "quarterly revenue guidance"],
+    );
+    assert_eq!(s.len(), 2);
+    assert!(s[0] > s[1]);
+    assert!((s[0] - crate::similarity(&a, &b)).abs() < 1e-6);
+}
+
+#[test]
 fn empty_input_is_zero_vector() {
     assert!(crate::encode_single("").iter().all(|&v| v == 0.0));
     assert!(crate::encode_single("   \t\n").iter().all(|&v| v == 0.0));

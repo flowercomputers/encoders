@@ -25,6 +25,7 @@ mod elem;
 pub mod accum;
 pub mod phf;
 pub mod pretokenizer;
+pub mod similarity;
 pub mod wordpiece;
 
 pub use elem::Elem;
@@ -130,10 +131,6 @@ where
     unsafe { out.assume_init() }
 }
 
-/// Batches of at least this many texts are encoded in parallel when the
-/// `rayon` feature is on.
-pub const PARALLEL_MIN: usize = 128;
-
 /// Uninitialized storage for `n` embeddings, and the final cast once every
 /// slot has been written.
 fn uninit_vec<const D: usize>(n: usize) -> Vec<MaybeUninit<[f32; D]>> {
@@ -152,12 +149,13 @@ unsafe fn assume_init_vec<const D: usize>(v: Vec<MaybeUninit<[f32; D]>>) -> Vec<
 }
 
 /// Encode a batch of texts, in parallel when the `rayon` feature is on and
-/// the batch has at least [`PARALLEL_MIN`] items. Each embedding is written
+/// the batch has at least `parallel_min` items. Each embedding is written
 /// once, straight into the returned vector.
 #[cfg(feature = "rayon")]
 pub fn encode<E, const D: usize, L, I>(
     params: &ModelParams<E, D>,
     lookup: &L,
+    parallel_min: usize,
     inputs: I,
 ) -> Vec<[f32; D]>
 where
@@ -169,7 +167,7 @@ where
     use rayon::prelude::*;
     let inputs: Vec<I::Item> = inputs.into_iter().collect();
     let mut out = uninit_vec::<D>(inputs.len());
-    if inputs.len() >= PARALLEL_MIN {
+    if inputs.len() >= parallel_min {
         out.par_iter_mut()
             .zip(inputs.par_iter())
             .with_min_len(16)
@@ -184,11 +182,13 @@ where
 }
 
 /// Encode a batch of texts. Each embedding is written once, straight into
-/// the returned vector.
+/// the returned vector. `parallel_min` is the batch size from which the
+/// `rayon` build would go parallel; unused here.
 #[cfg(not(feature = "rayon"))]
 pub fn encode<E, const D: usize, L, I>(
     params: &ModelParams<E, D>,
     lookup: &L,
+    _parallel_min: usize,
     inputs: I,
 ) -> Vec<[f32; D]>
 where
@@ -216,7 +216,11 @@ where
 /// - `pub const DIMENSIONS: usize`;
 /// - `pub fn encode_single(impl AsRef<str>) -> [f32; DIMENSIONS]`;
 /// - `pub fn encode_into(impl AsRef<str>, &mut [f32; DIMENSIONS])`;
-/// - `pub fn encode(impl IntoIterator<Item: AsRef<str> + Send + Sync>) -> Vec<[f32; DIMENSIONS]>`.
+/// - `pub fn encode(impl IntoIterator<Item: AsRef<str> + Send + Sync>) -> Vec<[f32; DIMENSIONS]>`;
+/// - `pub const PARALLEL_MIN: usize`, the batch size from which `encode` goes
+///   parallel with the `rayon` feature;
+/// - `similarity` / `distance` on two embeddings, and `compare` /
+///   `compare_each` on texts.
 #[macro_export]
 macro_rules! include_model {
     () => {
@@ -336,12 +340,51 @@ macro_rules! include_model {
             $crate::encode_into(&model::PARAMS, &model::lookup_hash, input.as_ref(), out)
         }
 
+        /// Batches of at least this many texts are encoded in parallel when
+        /// the `rayon` feature of `ese` is on.
+        pub const PARALLEL_MIN: usize = model::PARALLEL_MIN;
+
         /// Encode a batch of texts. With the `rayon` feature of `ese` enabled,
-        /// batches of `ese::PARALLEL_MIN` (64) or more are processed in parallel.
+        /// batches of [`PARALLEL_MIN`] or more are processed in parallel.
         pub fn encode(
             inputs: impl IntoIterator<Item = impl AsRef<str> + Send + Sync>,
         ) -> Vec<[f32; DIMENSIONS]> {
-            $crate::encode(&model::PARAMS, &model::lookup_hash, inputs)
+            $crate::encode(&model::PARAMS, &model::lookup_hash, PARALLEL_MIN, inputs)
+        }
+
+        /// Similarity of two embeddings in `[-1, 1]`: cosine similarity, or
+        /// the dot product when the model's outputs are already unit length
+        /// (`model::NORMALIZE`), which is the same number.
+        #[inline]
+        pub fn similarity(a: &[f32; DIMENSIONS], b: &[f32; DIMENSIONS]) -> f32 {
+            if model::NORMALIZE {
+                $crate::similarity::dot(a, b)
+            } else {
+                $crate::similarity::cosine(a, b)
+            }
+        }
+
+        /// Euclidean distance between two embeddings.
+        #[inline]
+        pub fn distance(a: &[f32; DIMENSIONS], b: &[f32; DIMENSIONS]) -> f32 {
+            $crate::similarity::euclidean(a, b)
+        }
+
+        /// [`similarity`] of two texts.
+        pub fn compare(a: impl AsRef<str>, b: impl AsRef<str>) -> f32 {
+            similarity(&encode_single(a), &encode_single(b))
+        }
+
+        /// [`similarity`] of one text to each of several, in order.
+        pub fn compare_each(
+            query: impl AsRef<str>,
+            candidates: impl IntoIterator<Item = impl AsRef<str> + Send + Sync>,
+        ) -> Vec<f32> {
+            let q = encode_single(query);
+            encode(candidates)
+                .iter()
+                .map(|c| similarity(&q, c))
+                .collect()
         }
     };
 }

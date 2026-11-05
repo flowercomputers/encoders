@@ -60,8 +60,7 @@ mrl-128 = []
 mrl-64 = []
 mrl-32 = []
 
-# Storage: f32 when neither is set. Per-column affine quantization, summed in
-# integer lanes.
+float32 = []
 int16 = []
 int8 = []
 
