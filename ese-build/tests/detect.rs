@@ -330,3 +330,111 @@ fn missing_files_are_reported() {
         other => panic!("expected MissingFile, got {other:?}"),
     }
 }
+
+/// gorp-code's shape: identifier-splitting `Replace` steps before
+/// `BertNormalizer`, a non-special phrase token, and truncation.
+fn identifier_split_tokenizer(first_pattern: &str, phrase_flags: &str) -> String {
+    let base = wordpiece_tokenizer();
+    let normalizer = format!(
+        r#""normalizer": {{"type": "Sequence", "normalizers": [
+    {{"type": "Replace", "pattern": {{"Regex": "{first_pattern}"}}, "content": " "}},
+    {{"type": "Replace", "pattern": {{"Regex": "(?<=[A-Z])(?=[A-Z][a-z])"}}, "content": " "}},
+    {{"type": "Replace", "pattern": {{"String": "_"}}, "content": " "}},
+    {{"type": "BertNormalizer", "clean_text": true, "handle_chinese_chars": true, "strip_accents": null, "lowercase": true}}
+  ]}}"#
+    );
+    let phrase = format!(
+        r#"{{"id": {}, "content": "hello world", "special": false, {phrase_flags}}}"#,
+        VOCAB.len()
+    );
+    base.replacen(
+        r#""normalizer": {"type": "BertNormalizer", "clean_text": true, "handle_chinese_chars": true, "strip_accents": null, "lowercase": true}"#,
+        &normalizer,
+        1,
+    )
+    .replacen(
+        r#"{"id": 1, "content": "[UNK]", "special": true}"#,
+        &format!(r#"{{"id": 1, "content": "[UNK]", "special": true}}, {phrase}"#),
+        1,
+    )
+    .replacen(
+        r#""added_tokens""#,
+        r#""truncation": {"direction": "Right", "max_length": 512, "strategy": "LongestFirst", "stride": 0}, "added_tokens""#,
+        1,
+    )
+}
+
+const PHRASE_FLAGS: &str =
+    r#""normalized": true, "single_word": true, "lstrip": false, "rstrip": false"#;
+
+#[test]
+fn identifier_splitting_and_phrase_tokens() {
+    let d = Dir::new("idsplit");
+    d.write(
+        "tokenizer.json",
+        identifier_split_tokenizer("(?<=[a-z0-9])(?=[A-Z])", PHRASE_FLAGS),
+    )
+    .write(
+        "config.json",
+        r#"{"normalize": true, "embedding_dtype": "float32"}"#,
+    )
+    .write(
+        "model.safetensors",
+        safetensors("embeddings", VOCAB.len() + 1, &[]),
+    );
+    let s = Builder::local(&d.0).generate(&d.out()).unwrap();
+    assert_eq!(
+        s.vocab_size,
+        VOCAB.len() + 1,
+        "the phrase joins the vocabulary"
+    );
+    let c = constants(&d.out());
+    assert!(c.contains("pub const SPLIT_IDENTIFIERS: bool = true;"));
+    assert!(c.contains("pub const HAS_PHRASES: bool = true;"));
+    assert!(c.contains("pub const MAX_TOKENS: usize = 512;"));
+    // model2vec pre-cut: 512 * median token length (5 code points here)
+    assert!(c.contains("pub const MAX_CHARS: usize = 2560;"), "{c}");
+    // the phrase does not widen WordPiece's piece-length bound
+    assert!(c.contains("pub const MAX_TOKEN_BYTES: usize = 5;"), "{c}");
+    assert_eq!(
+        fs::read_to_string(d.out().join("phrases.txt")).unwrap(),
+        "hello world"
+    );
+}
+
+#[test]
+fn rejects_other_replace_sequences() {
+    let d = Dir::new("idsplit-other");
+    d.write(
+        "tokenizer.json",
+        identifier_split_tokenizer("(?<=[a-z])(?=[0-9])", PHRASE_FLAGS),
+    )
+    .write(
+        "model.safetensors",
+        safetensors("embeddings", VOCAB.len() + 1, &[]),
+    );
+    match Builder::local(&d.0).generate(&d.out()) {
+        Err(Error::UnsupportedTokenizer(msg)) => assert!(msg.contains("Sequence"), "{msg}"),
+        other => panic!("expected UnsupportedTokenizer, got {other:?}"),
+    }
+}
+
+#[test]
+fn rejects_non_word_phrase_tokens() {
+    let d = Dir::new("idsplit-lstrip");
+    d.write(
+        "tokenizer.json",
+        identifier_split_tokenizer(
+            "(?<=[a-z0-9])(?=[A-Z])",
+            r#""normalized": true, "single_word": false, "lstrip": false, "rstrip": false"#,
+        ),
+    )
+    .write(
+        "model.safetensors",
+        safetensors("embeddings", VOCAB.len() + 1, &[]),
+    );
+    match Builder::local(&d.0).generate(&d.out()) {
+        Err(Error::UnsupportedTokenizer(msg)) => assert!(msg.contains("hello world"), "{msg}"),
+        other => panic!("expected UnsupportedTokenizer, got {other:?}"),
+    }
+}

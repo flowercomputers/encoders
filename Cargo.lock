@@ -677,6 +677,7 @@ dependencies = [
 name = "ese"
 version = "0.1.0"
 dependencies = [
+ "aho-corasick",
  "ese-unicode",
  "rayon",
 ]
