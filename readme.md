@@ -1,6 +1,8 @@
-![Our mascot Scott](.github/willie.svg)
+![Our mouse Scott](.github/willie.svg)
 
 # encoders
+
+Crate `encoders` is the fastest way to embed 
 
 ```rust
 let v = encoders::encode_single("hello world");
@@ -9,7 +11,7 @@ let batch = encoders::encode(["potato", "root vegetable"]);
 
 `encode` encodes a batch, in parallel for batches of 64 or more when the `rayon` feature is on. `encode_single` encodes one string; `encode_into` writes one embedding into caller-provided storage.
 
-#### Choosing a model
+### Choosing a model
 
 The default is `sentence-transformers/static-retrieval-mrl-en-v1` truncated to 512 dimensions and stored 8-bit. Every model in the catalog is selectable with a `model-*` feature. Cargo features are additive, so to pick another model turn the defaults off and enable exactly one model, optionally a `dim-*` feature, and optionally a `quant-*` feature:
 

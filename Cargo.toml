@@ -27,10 +27,14 @@ codegen-units = 1
 lto = "fat"
 
 [features]
-default = ["model-static-retrieval-mrl-en-v1", "dim-512"]
+default = ["quant-16"]
 
 # Exactly one model. Cargo features are additive, so to pick a non-default
 # model depend on this crate with `default-features = false`.
+model-bekko-static-v1-slim-100k = []
+model-bekko-static-v1-slim-75k = []
+model-bekko-static-v1-slim-50k = []
+model-bekko-static-v1-slim-32k = []
 model-static-retrieval-mrl-en-v1 = []
 model-static-similarity-mrl-multilingual-v1 = []
 model-bekko-static-embedding-v1 = []
