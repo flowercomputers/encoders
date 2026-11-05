@@ -114,7 +114,25 @@ const DIM_FEATURES: &[(&str, usize)] = &[
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-env-changed=ENCODERS_LOCAL_MODEL");
+    println!("cargo:rerun-if-env-changed=ENCODERS_LOCAL_DIMS");
     let out = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR"));
+
+    // Local benchmarking hook (not upstream): compile a model directory laid
+    // out like a hub repo instead of a catalog entry. No model-* feature is
+    // needed; ENCODERS_LOCAL_DIMS optionally truncates.
+    if let Some(dir) = env::var_os("ENCODERS_LOCAL_MODEL") {
+        let dims = env::var("ENCODERS_LOCAL_DIMS")
+            .ok()
+            .map(|d| d.parse::<usize>().expect("ENCODERS_LOCAL_DIMS"));
+        let summary = Builder::local(PathBuf::from(&dir))
+            .dims(dims)
+            .quant(selected_quant())
+            .generate(&out)
+            .unwrap_or_else(|e| panic!("ese-build failed for {}: {e}", dir.to_string_lossy()));
+        println!("cargo:warning={summary}");
+        return;
+    }
 
     let model = selected_model();
     let dims = selected_dims(model);
