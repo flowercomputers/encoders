@@ -1,10 +1,10 @@
-![Our mouse Scott](.github/willie.svg)
+![Our mouse, Scott](https://raw.githubusercontent.com/flowercomputers/encoders/refs/heads/master/.github/willie.svg)
 
 # encoders
 
-The encoders crate is the **fastest way to semantically embed text** on CPU.[^1] We take [a collection of state-of-the-art](#configuration-and-model-selection) static embedding models, and compile them directly into Rust code. That means no downloading models at runtime, no GPU, no inference runtime, no Python... just nanosecond scale text embedding. 
+The encoders crate is the **fastest way to semantically embed text** on CPU.[^1] We take [a collection of state-of-the-art](#configuration-and-model-selection) static embedding models, and compile them directly into Rust code. That means no downloading models at runtime, no GPU, no inference runtime, no Python... just nanosecond scale text embedding.
 
-![Read our article all about it here!](https://flowercomputers.com/)
+[Read our article all about it here!](https://flowercomputer.com/news)
 
 ```rust
 let query = encoders::encode_single("What is the capital of France?");
@@ -21,6 +21,10 @@ You can also configure encoders with a number of crate features for model select
 $ cargo add encoders
 $ cargo add encoders --features='potion-retrieval-32m, int8, mrl-256, rayon'
 ```
+
+## Performance
+
+Encoders is fast. Here's some througput numbers on an Apple M3 Pro, with the encoders crate at default settings:
 
 ## Configuration and model selection
 
@@ -40,11 +44,13 @@ encoders = { version = "1", features = ["bekko-static-v1-slim-32k", "mrl-256", "
 - **Internal Type.** `int16` is the default, as 16-bit quantization produces almost indistinguishable outputs from f32 in practice (at half the size). `int8` is a quarter the size, with cosine agreement against f32 above 0.999 on multi-token text (so also pretty much indistinguishable).
 - **`rayon`** makes `encode` parallel for large batches. This is only likely to improve performance if your workload is routinely encoding very large batches (a couple hundred or more inputs).
 
-### bekko models
+#### bekko models
 
-![](.github/quality-vs-vocab.png)
+[![Chart demonstrating quality loss of `bekko-static` models as vocabulary size is reduced.](https://raw.githubusercontent.com/flowercomputers/encoders/refs/heads/master/.github/quality-vs-vocab.png)](https://huggingface.co/flower-computer/bekko-static-v1-slim-50k)
 
 The model [hotchpotch/bekko-static-embedding-v1](https://huggingface.co/hotchpotch/bekko-static-embedding-v1) represents the current state-of-the-art as far as static embedding. We've trained a family of models derived from this model to shrink the vocabulary (and thus the model size), specifically for use in encoders. These are multilingual models, trained with MRL so their vectors can be truncated (reducing vector and model size at the cost of embedding quality), and licensed MIT.
+
+<!-- TODO: Some Specifics on how we did this ^^-->
 
 <table>
   <thead>
@@ -252,6 +258,8 @@ Otherwise, check out the [`ese-build`](./ese-build) and [`ese`](./ese) crates, w
 The idea behind encoders (and the crate that underpins it, [`ese`](./ese)) is simple: static embedding models are essentially lookup tables from token IDs to weights. Why not just resolve the tokens to their weights with a compile-time map? So, that's exactly what it does—with a lot of other performance-oriented tricks to boot!
 
 <!-- TODO: ![PRETTY CHARTS HERE]() -->
+
+<!-- TODO: Some Specifics re: quantization method, accumulation, tokenization etc -->
 
 The workspace has four crates. `encoders` is the one above. [`ese`](./ese) is the runtime: a byte-for-byte reimplementation of the BERT tokenizer pipeline, mean pooling in integer lanes, and a perfect-hash table over the vocabulary. [`ese-build`](./ese-build) runs in [`build.rs`](./build.rs): it fetches a model, works out how it is laid out and how it expects to be pooled from its own files, quantizes it, and writes the tables. [`ese-unicode`](./ese-unicode) is the 64 KB of Unicode tables the tokenizer needs, generated from pinned crates and checked in.
 
