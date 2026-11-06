@@ -286,7 +286,7 @@ fn small_rows_get_exponents() {
         .unwrap();
     // The row exponent is the low byte of each slot's verifier.
     let verify = fs::read(d.out().join("verify.bin")).unwrap();
-    let exps: Vec<u8> = verify.chunks_exact(8).map(|v| v[0]).collect();
+    let exps: Vec<u8> = verify.as_chunks::<8>().0.iter().map(|v| v[0]).collect();
     assert_eq!(exps.len(), 16);
     let c = constants(&d.out());
     assert!(c.contains("pub const UNK_EXP: u8 = 8;"), "{c}");

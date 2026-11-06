@@ -22,8 +22,8 @@ const CJK: u8 = 1 << 3;
 const NONSPACING_MARK: u8 = 1 << 4;
 const HANGUL_SYLLABLE: u8 = 1 << 5;
 
-// Result word encoding (must match lib.rs).
-const CP_MASK: u32 = 0x1F_FFFF;
+// Result word encoding (must match lib.rs). The low 21 bits hold a code
+// point (lib.rs's `CP_MASK`, needed only for decoding) or `EMPTY`.
 const EMPTY: u32 = 0x11_0000;
 const MULTI: u32 = 1 << 31;
 const STRIP_IS_IDENTITY: u32 = 1 << 30;
