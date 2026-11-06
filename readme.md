@@ -302,4 +302,19 @@ $ uv run --project bench/py bench/py/charts.py
 
 The code in this repo is licensed Apache-2.0. However, you must respect each model's license; model licenses are available at build time in the summary and at run time as `encoders::model::LICENSE`.
 
+### Cite this repo
+
+If you use encoders in your research, you can cite this repo with the BibTeX snippet below. But also, let us know! We'd love to hear from you.
+
+```bibtex
+@software{flowercomputer2026encoders,
+  author       = {William Turner Abney},
+  title        = {Encoders - Flower Computer},
+  url          = {https://github.com/flowercomputers/encoders},
+  doi          = {10.5281/zenodo.24023299},
+  publisher    = {Zenodo},
+  year         = 2026,
+}
+```
+
 [^1]: Any person wishing to dispute this claim is invited to either: challenge the [Flower Computer team](https://www.flowercomputer.com/about/) to hand-to-hand combat at our office in Brooklyn, New York, _OR_ create an issue on this repository referencing relevant benchmarks.
