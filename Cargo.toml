@@ -61,6 +61,7 @@ mrl-128 = []
 mrl-64 = []
 mrl-32 = []
 
+# Internal DType. Falls back to int16 if no feature is present.
 float32 = []
 int16 = []
 int8 = []
