@@ -5,11 +5,15 @@ edition = "2024"
 publish = false
 
 [lib]
-name = "ese"
+# Distinct from the `ese` runtime crate so workspace docs don't collide; the
+# Python module is still `ese` (`module-name` in pyproject.toml and the
+# `#[pymodule] fn ese` in src/lib.rs).
+name = "ese_py"
 crate-type = ["cdylib"]
+doc = false
 
 [dependencies]
-# Default model: bekko-static-v1-slim-50k at 1024 dims, 16-bit. Add a model
+# Default model: bekko-static-v1-slim-100k at 512 dims, 16-bit. Add a model
 # feature, an mrl-* width or float32/int8 to change it.
 encoders = { path = "..", features = ["rayon"] }
 numpy = "0.28.0"

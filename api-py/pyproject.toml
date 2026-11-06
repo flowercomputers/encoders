@@ -42,6 +42,7 @@ Homepage = "https://github.com/flowercomputers/encoders"
 Repository = "https://github.com/flowercomputers/encoders"
 
 [tool.maturin]
+module-name = "ese"
 features = [
   "pyo3/extension-module"
 ]
