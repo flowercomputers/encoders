@@ -14,6 +14,7 @@
 
 The encoders crate is the **fastest way to semantically embed text** on CPU.[^1] We take [a collection of state-of-the-art](#configuration-and-model-selection) static embedding models, and compile them directly into Rust code. That means no downloading models at runtime, no GPU, no inference runtime, no Python... just nanosecond scale text embedding.
 
+- [encoders on GitHub](https://github.com/flowercomputers/encoders)
 - [encoders on docs.rs](https://docs.rs/crate/encoders/latest)
 - [encoders on crates.io](https://crates.io/crates/encoders)
 - [_Read our article all about it here!_](https://flowercomputer.com/posts/even-faster-static-embedding/)
