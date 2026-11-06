@@ -972,6 +972,7 @@ dependencies = [
  "minreq",
  "model2vec-rs",
  "parquet",
+ "rayon",
  "serde_json",
  "sha2",
  "tantivy",

@@ -2,8 +2,9 @@
 
 Encodes the same first 4096 gooaq questions as the Rust bench, repeatedly for
 about 15 s per model, and reports the mean QPS with the first pass discarded
-as warm-up. Defaults to model2vec's default model and all-MiniLM-L6-v2, run
-on a single CPU thread to match the Rust bench; pass model names to override.
+as warm-up. Defaults to model2vec's default model and all-MiniLM-L6-v2, with
+torch limited to one thread; the Hugging Face tokenizer still spreads each
+batch across every core. Pass model names to override.
 
     uv run qps.py
     uv run qps.py minishlab/potion-base-8M sentence-transformers/all-MiniLM-L6-v2

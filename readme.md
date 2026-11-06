@@ -283,7 +283,7 @@ The idea behind encoders (and the crate that underpins it, [`ese`](./ese)) is si
 
 **Unbounded input.** When 256 rows are pending they're drained into a running sum and collection starts over, so there is no token limit: a three-word query and an entire book take the same code path, and every token of the book counts. This is a real difference from some other implementations. `model2vec-rs`, for example, truncates to 512 tokens by default, so very long inputs embed differently there.
 
-**Benchmarks.** The charts come from the [`bench`](./bench) crate (Criterion) and its Python companion in [`bench/py`](./bench/py). Every workload runs over questions from the [GooAQ](https://huggingface.co/datasets/sentence-transformers/gooaq) dataset, through each library's own API, on a single CPU thread. The exceptions are the bars labeled `rayon`, and tantivy, whose index writer starts its own worker threads. SHA-256 uses the `sha2` crate's portable implementation with hardware SHA instructions disabled. To regenerate both charts on your own machine:
+**Benchmarks.** The charts come from the [`bench`](./bench) crate (Criterion) and its Python companion in [`bench/py`](./bench/py). Every workload runs over questions from the [GooAQ](https://huggingface.co/datasets/sentence-transformers/gooaq) dataset. To regenerate both charts on your own machine:
 
 ```console
 $ uv run --project bench/py bench/py/charts.py
@@ -293,7 +293,7 @@ The workspace has four crates. `encoders` is the one above. [`ese`](./ese) is th
 
 ### Caveats emptor
 
-**Embedding quality.** Encoders only works with static embedding models: each token has one fixed vector and a text is the mean of its tokens' vectors. There is no attention, so word order and context are invisible, and quality is a step below even small transformer encoders. On retrieval benchmarks the gap is real but not enormous; the bekko family scores about 49 to 54 on NanoBEIR against the low 60s for a small transformer. In exchange, embedding text runs in the order of nanoseconds instead of milliseconds. For a lot of (if not most) search, dedup, clustering, and routing work, that is the right trade (and we hope the speed makes up for the rest).
+**Embedding quality.** Encoders only works with static embedding models: each token has one fixed vector and a text is the mean of its tokens' vectors. There is no attention, so word order and context are invisible, and quality is a step below even small transformer encoders. On retrieval benchmarks the gap is real but not enormous; the bekko family scores about 49 to 54 on NanoBEIR against the low 60s for a small transformer. In exchange, embedding text runs in the order of nanoseconds instead of milliseconds. For a lot of (if not most) search, dedup, clustering, and routing work, that seems like the right trade (and we hope the speed makes up for the rest).
 
 **Binary size and compile time.** The model's lookup table is embedded in your executable, so this can add a few MB (for a small model at a narrow width) up to a few hundred MB for a model large vocabulary at full width in f32. That said, any model needs its weights at runtime somehow; this crate just puts them in the binary rather than downloading/loading them at runtime. The first build of a model downloads it from the Hugging Face hub (into `target/ese-cache`, so it's cleaned up by `cargo clean`) and the final link of a large table takes a while. You also _really, really need to compile this with optimizations on_... give LLVM a chance to autovectorize!
 

@@ -5,12 +5,15 @@
 //!   With `--features rayon` this is recorded as `encoders-rayon` on every
 //!   core and the other two are skipped.
 //! - `model2vec-rs`: model2vec's default model (`minishlab/potion-base-8M`),
-//!   downloaded through hf-hub on first run.
+//!   downloaded through hf-hub on first run. Its only parallelism is the
+//!   `tokenizers` batch encode, which runs here on every core in its own rayon
+//!   pool, matching sentence-transformers, whose tokenizer is not limited by
+//!   torch's thread setting either.
 //! - `candle/all-MiniLM-L6-v2`: the usual small transformer baseline, run on
 //!   CPU with candle in f32, mean pooled and normalized like
 //!   sentence-transformers does. Weights are downloaded to `target/minilm`
-//!   on first run. Outside the `rayon` build everything is pinned to one
-//!   thread, so all three bars are single-core.
+//!   on first run. Outside the `rayon` build, encoders and candle are pinned
+//!   to one thread.
 
 use criterion::{Criterion, SamplingMode, Throughput, criterion_group, criterion_main};
 use candle_core::{Device, Tensor};
@@ -138,8 +141,15 @@ fn bench_embedders(c: &mut Criterion) {
 
     let model2vec = StaticModel::from_pretrained(MODEL2VEC_DEFAULT, None, None, None)
         .unwrap_or_else(|e| panic!("model2vec-rs failed to load {MODEL2VEC_DEFAULT}: {e}"));
+    // The global pool is pinned to one thread for candle; model2vec-rs gets
+    // a pool of its own on every core. Rayon's parallel iterators (here the
+    // `tokenizers` batch encode) run in whichever pool they are called from.
+    let all_cores = rayon::ThreadPoolBuilder::new()
+        .num_threads(std::thread::available_parallelism().map_or(1, |n| n.get()))
+        .build()
+        .expect("failed to build the model2vec-rs thread pool");
     group.bench_function("model2vec-rs", |b| {
-        b.iter(|| black_box(model2vec.encode(black_box(&batch))));
+        b.iter(|| all_cores.install(|| black_box(model2vec.encode(black_box(&batch)))));
     });
 
     let minilm = MiniLm::load();

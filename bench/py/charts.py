@@ -48,8 +48,8 @@ QPS_LABELS = {
     "encoders-rayon": "encoders\n(rayon)",
     "model2vec-rs": "model2vec-rs\npotion-base-8M",
     "candle/all-MiniLM-L6-v2": "candle\nall-MiniLM-L6-v2",
-    "minishlab/potion-base-8M": "sentence-transformers\npotion-base-8M",
-    "sentence-transformers/all-MiniLM-L6-v2": "sentence-transformers\nall-MiniLM-L6-v2",
+    "minishlab/potion-base-8M": "python\npotion-base-8M",
+    "sentence-transformers/all-MiniLM-L6-v2": "python\nall-MiniLM-L6-v2",
 }
 PY_MODELS = ["minishlab/potion-base-8M", "sentence-transformers/all-MiniLM-L6-v2"]
 HIGHLIGHT = {"encoders", "encoders-rayon"}
@@ -147,7 +147,10 @@ def criterion_results(group: str) -> dict[str, float]:
         assert unit in ("Bytes", "Elements"), unit
         out[meta["function_id"]] = count / secs
     if not out:
-        print(f"no criterion results under {CRITERION / group}; skipping its chart", file=sys.stderr)
+        print(
+            f"no criterion results under {CRITERION / group}; skipping its chart",
+            file=sys.stderr,
+        )
     return out
 
 
