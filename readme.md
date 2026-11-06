@@ -2,7 +2,9 @@
 
 # encoders
 
-The encoders crate is the **fastest way to semantically embed text** on CPU.[^1] We take [a collection of state-of-the-art](#configuration-and-model-selection) static embedding models, and compile them directly into Rust code. That means no downloading models at runtime, no GPU, no inference runtime, no Python... just nanosecond scale text embedding! <!-- TODO: [Read our article all about it here!](https://flowercomputers.com/) -->
+The encoders crate is the **fastest way to semantically embed text** on CPU.[^1] We take [a collection of state-of-the-art](#configuration-and-model-selection) static embedding models, and compile them directly into Rust code. That means no downloading models at runtime, no GPU, no inference runtime, no Python... just nanosecond scale text embedding. 
+
+![Read our article all about it here!](https://flowercomputers.com/)
 
 ```rust
 let query = encoders::encode_single("What is the capital of France?");

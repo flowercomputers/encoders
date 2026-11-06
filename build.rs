@@ -1,4 +1,7 @@
-use std::{env, path::PathBuf};
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+};
 
 use ese_build::{Builder, Quant};
 
@@ -191,10 +194,20 @@ fn main() {
     let dims = selected_dims(model);
     let quant = selected_quant();
 
-    let mut builder = Builder::hub(model.repo);
-    if let Some(dir) = env::var_os("ESE_CACHE_DIR").filter(|d| !d.is_empty()) {
-        builder = builder.cache_dir(dir);
-    }
+    let docs_rs = env::var_os("DOCS_RS").is_some();
+    let builder = if docs_rs {
+        // docs.rs doesn't have network access, so we have to give it a dummy model
+        Builder::local(dummy_model(&out, dims.unwrap_or(model.dims[0])))
+    } else {
+        let b = Builder::hub(model.repo).revision(model.revision);
+        if let Some(dir) = env::var_os("ESE_CACHE_DIR").filter(|d| !d.is_empty()) {
+            // we're in CI
+            b.cache_dir(dir)
+        } else {
+            b
+        }
+    };
+
     let summary = builder
         .revision(model.revision)
         .dims(dims)
@@ -206,6 +219,26 @@ fn main() {
         .test_data(cfg!(feature = "tests"))
         .generate(&out)
         .unwrap_or_else(|e| panic!("ese-build failed for {}: {e}", model.repo));
+
+    if docs_rs {
+        // we want the docs to show real consts
+        let mc_path = out.join("model_constants.rs");
+        let constants = fs::read_to_string(&mc_path).expect("read model_constants.rs");
+        let constants = constants
+            .lines()
+            .map(|l| {
+                if l.starts_with("pub const MODEL_ID:") {
+                    format!("pub const MODEL_ID: &str = {:?};", model.repo)
+                } else if l.starts_with("pub const MODEL_REVISION:") {
+                    format!("pub const MODEL_REVISION: &str = {:?};", model.revision)
+                } else {
+                    l.to_owned()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(&mc_path, constants).expect("write model_constants.rs");
+    }
 
     println!("cargo:warning={summary}");
 }
@@ -294,4 +327,36 @@ fn selected_quant() -> Quant {
         (false, true) => Quant::F32,
         (false, false) => Quant::U16,
     }
+}
+
+fn dummy_model(out: &Path, dims: usize) -> PathBuf {
+    const VOCAB: &[&str] = &["[PAD]", "[UNK]", "[CLS]", "[SEP]"];
+    let dir = out.join("dummy-model");
+    fs::create_dir_all(&dir).expect("create dummy model dir");
+
+    let vocab: Vec<String> = VOCAB
+        .iter()
+        .enumerate()
+        .map(|(i, t)| format!("{t:?}: {i}"))
+        .collect();
+    let tokenizer = format!(
+        r###"{{"added_tokens": [{{"id": 0, "content": "[PAD]", "special": true}}, {{"id": 1, "content": "[UNK]", "special": true}}],
+"normalizer": {{"type": "BertNormalizer", "clean_text": true, "handle_chinese_chars": true, "strip_accents": null, "lowercase": true}},
+"pre_tokenizer": {{"type": "BertPreTokenizer"}},
+"model": {{"type": "WordPiece", "unk_token": "[UNK]", "continuing_subword_prefix": "##", "max_input_chars_per_word": 100, "vocab": {{{}}}}}}}"###,
+        vocab.join(", ")
+    );
+    fs::write(dir.join("tokenizer.json"), tokenizer).expect("write placeholder tokenizer");
+
+    let body = vec![0u8; VOCAB.len() * dims * 4];
+    let header = format!(
+        r#"{{"embeddings":{{"dtype":"F32","shape":[{},{dims}],"data_offsets":[0,{}]}}}}"#,
+        VOCAB.len(),
+        body.len()
+    );
+    let mut st = (header.len() as u64).to_le_bytes().to_vec();
+    st.extend_from_slice(header.as_bytes());
+    st.extend_from_slice(&body);
+    fs::write(dir.join("model.safetensors"), st).expect("write dummy weights");
+    dir
 }
