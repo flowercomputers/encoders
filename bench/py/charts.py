@@ -36,21 +36,23 @@ QPS_CACHE = HERE / "benchmarks" / "qps.json"
 # sorted by value.
 THROUGHPUT_LABELS = {
     "encoders": "encoders",
+    "encoders-rayon": "encoders\n(rayon)",
     "tokenize": "HF tokenizers\nWordPiece only",
-    "sha256_soft": "SHA-256\n(sha2 crate, software)",
+    "sha256_soft": "SHA-256\nno hw accel",
     "gzip": "gzip\nflate2 default",
-    "tantivy_index": "tantivy\nindex build",
-    "json_decode": "JSON decode\nserde_json",
+    "tantivy_index": "tantivy index\nin-memory",
+    "json_decode": "JSON decode\nserde_json crate",
 }
 QPS_LABELS = {
     "encoders": "encoders",
+    "encoders-rayon": "encoders\n(rayon)",
     "model2vec-rs": "model2vec-rs\npotion-base-8M",
     "candle/all-MiniLM-L6-v2": "candle\nall-MiniLM-L6-v2",
     "minishlab/potion-base-8M": "sentence-transformers\npotion-base-8M",
     "sentence-transformers/all-MiniLM-L6-v2": "sentence-transformers\nall-MiniLM-L6-v2",
 }
 PY_MODELS = ["minishlab/potion-base-8M", "sentence-transformers/all-MiniLM-L6-v2"]
-HIGHLIGHT = "encoders"
+HIGHLIGHT = {"encoders", "encoders-rayon"}
 # Every bar other than `HIGHLIGHT` is re-cut in OKLCH: chroma scaled by
 # OTHER_SATURATION (0 = gray, 1 = the palette's own chroma) and lightness
 # pinned to OTHER_LIGHTNESS (0..1, perceptual) so dark slots such as green
@@ -99,23 +101,30 @@ def recut(hex_color: str, chroma_keep: float, lightness: float) -> str:
 
 
 def bar_colors(keys: list[str], labels: dict[str, str], t) -> list[str]:
-    slots = [k for k in labels if k != HIGHLIGHT]
+    slots = [k for k in labels if k not in HIGHLIGHT]
     out = []
     for k in keys:
-        if k == HIGHLIGHT:
+        if k in HIGHLIGHT:
             out.append(t["series"][0])
         else:
-            out.append(recut(t["series"][1 + slots.index(k)], OTHER_SATURATION, OTHER_LIGHTNESS))
+            out.append(
+                recut(
+                    t["series"][1 + slots.index(k)], OTHER_SATURATION, OTHER_LIGHTNESS
+                )
+            )
     return out
 
 
 def run_rust_benches():
+    # Each bench twice: the default build, then `--features rayon`, which
+    # records only the parallel encoders bar under a second id.
     for bench in ("throughput", "embedders"):
-        subprocess.run(
-            ["cargo", "bench", "-p", "encoders-bench", "--bench", bench],
-            cwd=ROOT,
-            check=True,
-        )
+        for extra in ([], ["--features", "rayon"]):
+            subprocess.run(
+                ["cargo", "bench", "-p", "encoders-bench", "--bench", bench, *extra],
+                cwd=ROOT,
+                check=True,
+            )
 
 
 def run_python_bench() -> dict[str, float]:
@@ -138,9 +147,7 @@ def criterion_results(group: str) -> dict[str, float]:
         assert unit in ("Bytes", "Elements"), unit
         out[meta["function_id"]] = count / secs
     if not out:
-        sys.exit(
-            f"no criterion results under {CRITERION / group}; run without --no-bench"
-        )
+        print(f"no criterion results under {CRITERION / group}; skipping its chart", file=sys.stderr)
     return out
 
 
@@ -185,6 +192,8 @@ def bars(
     items = sorted(
         ((k, v) for k, v in values.items() if k in labels), key=lambda kv: kv[1]
     )
+    if not items:
+        return
     xs = range(len(items))
     cols = bar_colors([k for k, _ in items], labels, t)
 
@@ -222,7 +231,7 @@ def bars(
             ha="center",
             fontsize=8,
             family=fams["mono"],
-            color=col if k == HIGHLIGHT else t["ink2"],
+            color=col if k in HIGHLIGHT else t["ink2"],
             zorder=5,
         )
     ax.set_xticks(list(xs))
@@ -230,7 +239,7 @@ def bars(
         [labels.get(k, k) for k, _ in items], fontsize=8.5, color=t["ink2"]
     )
     for lab, (k, _) in zip(ax.get_xticklabels(), items):
-        if k == HIGHLIGHT:
+        if k in HIGHLIGHT:
             lab.set_color(t["ink"])
     ax.set_ylabel(ylabel, color=t["ink2"], fontsize=9.5)
     ax.set_title(
@@ -262,7 +271,7 @@ def main():
     bars(
         throughput,
         THROUGHPUT_LABELS,
-        "Throughput",
+        "Throughput (GooAQ corpus)",
         "bytes per second, log scale",
         OUT / "throughput.png",
         log=True,
@@ -273,7 +282,7 @@ def main():
     bars(
         qps,
         QPS_LABELS,
-        "Queries embedded per second",
+        "Queries embedded per second (GooAQ)",
         "queries per second",
         OUT / "qps.png",
         log=False,

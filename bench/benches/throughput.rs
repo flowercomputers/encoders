@@ -27,6 +27,9 @@ use tantivy::schema::{Schema, TEXT};
 use tantivy::{Index, doc};
 
 mod common;
+
+/// Criterion id of the encoders bar; `--features rayon` records a second one.
+const ENCODERS_ID: &str = if cfg!(feature = "rayon") { "encoders-rayon" } else { "encoders" };
 use common::{load_sentences, target_dir};
 
 /// The `tokenizer.json` ese-build downloaded for the compiled model. It sits
@@ -67,11 +70,16 @@ fn bench_throughput(c: &mut Criterion) {
     group.sample_size(10);
     group.sampling_mode(SamplingMode::Flat);
 
-    group.bench_function("encoders", |b| {
+    group.bench_function(ENCODERS_ID, |b| {
         b.iter(|| {
             let _ = black_box(encoders::encode(sentences));
         });
     });
+    if cfg!(feature = "rayon") {
+        // Only the encoders bar differs between builds.
+        group.finish();
+        return;
+    }
 
     {
         let tokenizer = tokenizers::Tokenizer::from_file(tokenizer_path())

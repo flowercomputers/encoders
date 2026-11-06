@@ -1,5 +1,15 @@
 ![Our mouse, Scott](https://raw.githubusercontent.com/flowercomputers/encoders/refs/heads/master/.github/hero.jpg)
 
+<div align="right">
+
+[
+![Current version](https://img.shields.io/crates/v/encoders)
+![Total downloads](https://img.shields.io/crates/d/encoders)
+![Licensed Apache-2.0](https://img.shields.io/github/license/flowercomputers/encoders)
+](https://crates.io/crates/encoders)
+
+</div>
+
 # encoders
 
 The encoders crate is the **fastest way to semantically embed text** on CPU.[^1] We take [a collection of state-of-the-art](#configuration-and-model-selection) static embedding models, and compile them directly into Rust code. That means no downloading models at runtime, no GPU, no inference runtime, no Python... just nanosecond scale text embedding.
@@ -26,7 +36,7 @@ $ cargo add encoders --features='potion-retrieval-32m, int8, mrl-256, rayon'
 
 ## Performance
 
-Encoders is fast. Here's some througput numbers on an Apple M3 Pro, with the encoders crate at default settings (with the `rayon` feature enabled):
+Encoders is fast. To give you an idea of just _how_ fast, here's encoders compared to a handful of other throughput-sensitive tasks (measured on an Apple M3 Pro CPU):
 
 ![Chart demonstrating the encoders' crate throughput to other tasks](https://raw.githubusercontent.com/flowercomputers/encoders/refs/heads/master/.github/throughput.png)
 
@@ -269,7 +279,7 @@ The workspace has four crates. `encoders` is the one above. [`ese`](./ese) is th
 
 **Embedding quality.** Encoders only works with static embedding models: each token has one fixed vector and a text is the mean of its tokens' vectors. There is no attention, so word order and context are invisible, and quality is a step below even small transformer encoders. On retrieval benchmarks the gap is real but not enormous; the bekko family scores about 49 to 54 on NanoBEIR against the low 60s for a small transformer. In exchange, embedding text runs in the order of nanoseconds instead of milliseconds. For a lot of (if not most) search, dedup, clustering, and routing work, that is the right trade (and we hope the speed makes up for the rest).
 
-**Binary size and compile time.** The model's lookup table is embedded in your executable: from a few MB for a small model at a narrow width to a few hundred MB for a large vocabulary at full width in f32. Any embedding model needs its weights at runtime somehow; this crate just puts them in the binary rather than downloading/loading them at runtime. The first build of a model downloads it from the Hugging Face hub (into `target/ese-cache`, so it's cleaned up by `cargo clean`) and the final link of a large table takes a while. You also _really, really need to compile this with optimizations on_... give LLVM a chance to autovectorize!
+**Binary size and compile time.** The model's lookup table is embedded in your executable, so this can add a few MB (for a small model at a narrow width) up to a few hundred MB for a model large vocabulary at full width in f32. That said, any model needs its weights at runtime somehow; this crate just puts them in the binary rather than downloading/loading them at runtime. The first build of a model downloads it from the Hugging Face hub (into `target/ese-cache`, so it's cleaned up by `cargo clean`) and the final link of a large table takes a while. You also _really, really need to compile this with optimizations on_... give LLVM a chance to autovectorize!
 
 ## Licensing
 

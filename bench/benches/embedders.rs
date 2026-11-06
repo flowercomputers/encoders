@@ -21,6 +21,9 @@ use std::time::Duration;
 use tokenizers::{PaddingParams, Tokenizer, TruncationParams};
 
 mod common;
+
+/// Criterion id of the encoders bar; `--features rayon` records a second one.
+const ENCODERS_ID: &str = if cfg!(feature = "rayon") { "encoders-rayon" } else { "encoders" };
 use common::{load_sentences, target_dir};
 
 const BATCH: usize = 4096;
@@ -104,9 +107,12 @@ impl MiniLm {
 
 fn bench_embedders(c: &mut Criterion) {
     // candle's matmuls and the tokenizer both fan out over rayon; this must be
-    // set before the global pool is first touched.
-    // SAFETY: single-threaded at this point, no other thread reads the env.
-    unsafe { std::env::set_var("RAYON_NUM_THREADS", "1") };
+    // set before the global pool is first touched. The `rayon` build is the
+    // one bar meant to use every core, so it is left alone there.
+    if !cfg!(feature = "rayon") {
+        // SAFETY: single-threaded at this point, no other thread reads the env.
+        unsafe { std::env::set_var("RAYON_NUM_THREADS", "1") };
+    }
     let sentences = load_sentences();
     let batch: Vec<String> = sentences[..BATCH.min(sentences.len())].to_vec();
     let n = batch.len();
@@ -118,9 +124,14 @@ fn bench_embedders(c: &mut Criterion) {
     group.sample_size(10);
     group.sampling_mode(SamplingMode::Flat);
 
-    group.bench_function("encoders", |b| {
+    group.bench_function(ENCODERS_ID, |b| {
         b.iter(|| black_box(encoders::encode(black_box(&batch))));
     });
+    if cfg!(feature = "rayon") {
+        // Only the encoders bar differs between builds.
+        group.finish();
+        return;
+    }
 
     let model2vec = StaticModel::from_pretrained(MODEL2VEC_DEFAULT, None, None, None)
         .unwrap_or_else(|e| panic!("model2vec-rs failed to load {MODEL2VEC_DEFAULT}: {e}"));
