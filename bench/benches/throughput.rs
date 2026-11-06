@@ -10,28 +10,29 @@
 //! - `gzip`: `flate2` at the default level, sentences streamed newline-separated
 //!   through one encoder into a sink (one gzip member per sentence would mostly
 //!   measure deflate setup).
-//! - `tantivy_search`: each sentence parsed as a query and run for the top 10
-//!   hits against an in-RAM index of the same sentences. Index construction is
-//!   outside the timed region; only query parsing and search are measured.
+//! - `tantivy_index`: building an in-RAM index over all the sentences, one
+//!   `TEXT` field, including the commit.
+//! - `json_decode`: `serde_json` parsing this model's `tokenizer.json` (a few
+//!   MB of vocab) into a `Value`. Throughput counts the file's bytes, not the
+//!   sentences.
 
-use criterion::{Criterion, Throughput, criterion_group, criterion_main};
+use criterion::{Criterion, SamplingMode, Throughput, criterion_group, criterion_main};
 use flate2::{Compression, write::GzEncoder};
 use sha2::{Digest, Sha256};
 use std::hint::black_box;
 use std::io::Write;
 use std::path::PathBuf;
-use tantivy::collector::TopDocs;
-use tantivy::query::QueryParser;
+use std::time::Duration;
 use tantivy::schema::{Schema, TEXT};
 use tantivy::{Index, doc};
 
 mod common;
-use common::load_sentences;
+use common::{load_sentences, target_dir};
 
 /// The `tokenizer.json` ese-build downloaded for the compiled model. It sits
 /// at the cache root or, for sentence-transformers layouts, one folder down.
 fn tokenizer_path() -> PathBuf {
-    let root = PathBuf::from("target/ese-cache")
+    let root = target_dir().join("ese-cache")
         .join(encoders::model::MODEL_ID.replace('/', "--"))
         .join(encoders::model::MODEL_REVISION.replace('/', "--"));
     let direct = root.join("tokenizer.json");
@@ -58,28 +59,32 @@ fn bench_throughput(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("throughput");
     group.throughput(Throughput::Bytes(bytes));
-    group.sample_size(100);
+    // Each bar gets a fixed window: a short warm-up, then ten samples spread
+    // over 15 s. Flat sampling keeps criterion from scaling iteration counts
+    // up when a single pass is already long.
+    group.warm_up_time(Duration::from_secs(2));
+    group.measurement_time(Duration::from_secs(15));
+    group.sample_size(10);
+    group.sampling_mode(SamplingMode::Flat);
 
     group.bench_function("encoders", |b| {
-        let mut out = [0f32; encoders::DIMENSIONS];
         b.iter(|| {
-            for s in sentences {
-                encoders::encode_into(black_box(s), &mut out);
-                black_box(&out);
-            }
+            let _ = black_box(encoders::encode(sentences));
         });
     });
 
-    let tokenizer = tokenizers::Tokenizer::from_file(tokenizer_path())
-        .unwrap_or_else(|e| panic!("tokenizers failed to load tokenizer.json: {e}"));
-    group.bench_function("tokenize", |b| {
-        b.iter(|| {
-            for s in sentences {
-                let enc = tokenizer.encode_fast(black_box(s.as_str()), false).unwrap();
-                black_box(enc.get_ids());
-            }
+    {
+        let tokenizer = tokenizers::Tokenizer::from_file(tokenizer_path())
+            .unwrap_or_else(|e| panic!("tokenizers failed to load tokenizer.json: {e}"));
+        group.bench_function("tokenize", |b| {
+            b.iter(|| {
+                for s in sentences {
+                    let enc = tokenizer.encode_fast(black_box(s.as_str()), false).unwrap();
+                    black_box(enc.get_ids());
+                }
+            });
         });
-    });
+    }
 
     group.bench_function("sha256_soft", |b| {
         b.iter(|| {
@@ -100,27 +105,29 @@ fn bench_throughput(c: &mut Criterion) {
         });
     });
 
-    let mut schema = Schema::builder();
-    let body = schema.add_text_field("body", TEXT);
-    let index = Index::create_in_ram(schema.build());
     {
-        let mut writer = index.writer(64 << 20).unwrap();
-        for s in sentences {
-            writer.add_document(doc!(body => s.as_str())).unwrap();
-        }
-        writer.commit().unwrap();
-    }
-    let searcher = index.reader().unwrap().searcher();
-    let parser = QueryParser::for_index(&index, vec![body]);
-    group.bench_function("tantivy_search", |b| {
-        b.iter(|| {
-            let mut hits = 0usize;
+        let mut schema = Schema::builder();
+        let body = schema.add_text_field("body", TEXT);
+        let schema = schema.build();
+        let build_index = || {
+            let index = Index::create_in_ram(schema.clone());
+            let mut writer = index.writer(64 << 20).unwrap();
             for s in sentences {
-                let (query, _) = parser.parse_query_lenient(black_box(s));
-                hits += searcher.search(&query, &TopDocs::with_limit(10).order_by_score()).unwrap().len();
+                writer.add_document(doc!(body => s.as_str())).unwrap();
             }
-            black_box(hits)
+            writer.commit().unwrap();
+            index
+        };
+
+        group.bench_function("tantivy_index", |b| {
+            b.iter(|| black_box(build_index()));
         });
+    }
+
+    let json = std::fs::read_to_string(tokenizer_path()).unwrap();
+    group.throughput(Throughput::Bytes(json.len() as u64));
+    group.bench_function("json_decode", |b| {
+        b.iter(|| black_box(serde_json::from_str::<serde_json::Value>(black_box(&json)).unwrap()));
     });
 
     group.finish();

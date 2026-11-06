@@ -17,11 +17,11 @@ categories = [
     "science",
 ]
 build = "build.rs"
-exclude = ["benches/py/", ".github/", "todo.md"]
+exclude = ["bench/", ".github/", "todo.md"]
 
 [workspace]
 resolver = "2"
-members = ["ese", "ese-unicode", "ese-build", "api-py"]
+members = ["ese", "ese-unicode", "ese-build", "api-py", "bench"]
 
 [profile.release]
 codegen-units = 1
@@ -76,25 +76,3 @@ ese = { version = "0.1.0", path = "ese" }
 
 [build-dependencies]
 ese-build = { version = "0.1.0", path = "ese-build" }
-
-[dev-dependencies]
-criterion = { version = "0", features = ["html_reports"] }
-model2vec-rs = "0"
-parquet = { version = "58" }
-minreq = { version = "2", features = ["https-native"] }
-sha2 = { version = "0.10", features = ["force-soft"] }
-flate2 = "1.1.11"
-tokenizers = { version = "0.23.2", default-features = false, features = ["onig"] }
-tantivy = "0.27.0"
-
-[[bench]]
-name = "bench_encode"
-harness = false
-
-[[bench]]
-name = "gooaq"
-harness = false
-
-[[bench]]
-name = "throughput"
-harness = false

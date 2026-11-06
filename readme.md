@@ -26,7 +26,9 @@ $ cargo add encoders --features='potion-retrieval-32m, int8, mrl-256, rayon'
 
 ## Performance
 
-Encoders is fast. Here's some througput numbers on an Apple M3 Pro, with the encoders crate at default settings:
+Encoders is fast. Here's some througput numbers on an Apple M3 Pro, with the encoders crate at default settings (with the `rayon` feature enabled):
+
+![Chart demonstrating the encoders' crate throughput to other tasks](https://raw.githubusercontent.com/flowercomputers/encoders/refs/heads/master/.github/throughput.png)
 
 ## Configuration and model selection
 
@@ -48,7 +50,7 @@ encoders = { version = "2", features = ["bekko-static-v1-slim-32k", "mrl-256", "
 
 #### bekko models
 
-[![Chart demonstrating quality loss of `bekko-static` models as vocabulary size is reduced.](https://raw.githubusercontent.com/flowercomputers/encoders/refs/heads/master/.github/quality-vs-vocab.png)](https://huggingface.co/flower-computer/bekko-static-v1-slim-50k)
+[![Chart demonstrating quality loss of `bekko-static` models as vocabulary size is reduced.](https://huggingface.co/flower-computer/bekko-static-v1-slim-32k/resolve/main/quality-vs-vocab.png)](https://huggingface.co/flower-computer/bekko-static-v1-slim-50k)
 
 The model [hotchpotch/bekko-static-embedding-v1](https://huggingface.co/hotchpotch/bekko-static-embedding-v1) represents the current state-of-the-art as far as static embedding. We've trained a family of models derived from this model to shrink the vocabulary (and thus the model size), specifically for use in encoders. These are multilingual models, trained with MRL so their vectors can be truncated (reducing vector and model size at the cost of embedding quality), and licensed MIT. [Read all about it on HuggingFace](https://huggingface.co/flower-computer/bekko-static-v1-slim-100k).
 
@@ -257,9 +259,9 @@ Otherwise, check out the [`ese-build`](./ese-build) and [`ese`](./ese) crates, w
 
 The idea behind encoders (and the crate that underpins it, [`ese`](./ese)) is simple: static embedding models are essentially lookup tables from token IDs to weights. Why not just resolve the tokens to their weights with a compile-time map? So, that's exactly what it does—with a lot of other performance-oriented tricks to boot!
 
-<!-- TODO: ![PRETTY CHARTS HERE]() -->
+![Chart comparing queries per second on encoders vs. other methods to embed text](https://raw.githubusercontent.com/flowercomputers/encoders/refs/heads/master/.github/qps.png)
 
-<!-- TODO: Some Specifics re: quantization method, accumulation, tokenization, unbounded input size etc -->
+<!-- TODO: Some Specifics re: internal quantization method, accumulation, tokenization, unbounded input size etc -->
 
 The workspace has four crates. `encoders` is the one above. [`ese`](./ese) is the runtime: a byte-for-byte reimplementation of the BERT tokenizer pipeline, mean pooling in integer lanes, and a perfect-hash table over the vocabulary. [`ese-build`](./ese-build) runs in [`build.rs`](./build.rs): it fetches a model, works out how it is laid out and how it expects to be pooled from its own files, quantizes it, and writes the tables. [`ese-unicode`](./ese-unicode) is the 64 KB of Unicode tables the tokenizer needs, generated from pinned crates and checked in.
 

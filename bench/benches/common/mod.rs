@@ -1,4 +1,5 @@
 //! Shared gooaq dataset loader for benches.
+#![allow(dead_code)]
 
 use parquet::file::reader::{FileReader, SerializedFileReader};
 use parquet::record::Field;
@@ -10,7 +11,11 @@ const PARQUET_URLS: &[&str] = &[
     "https://huggingface.co/api/datasets/sentence-transformers/gooaq/parquet/pair/train/1.parquet",
 ];
 
-const CACHE_DIR: &str = "target/ese-cache/dataset-gooaq";
+/// The workspace `target/` directory. Benches run with the package directory
+/// as cwd, and the shared caches (gooaq, ese-cache, minilm) live one level up.
+pub fn target_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../target")
+}
 
 fn download_parquet(url: &str, path: &PathBuf) {
     let resp = minreq::get(url)
@@ -41,7 +46,7 @@ fn extract_questions(path: &PathBuf) -> Vec<String> {
 }
 
 pub fn load_sentences() -> Vec<String> {
-    let cache_dir = PathBuf::from(CACHE_DIR);
+    let cache_dir = target_dir().join("gooaq");
     fs::create_dir_all(&cache_dir).ok();
 
     let mut all_sentences = Vec::new();

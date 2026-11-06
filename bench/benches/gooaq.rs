@@ -52,7 +52,7 @@ fn bench_encode_by_length(c: &mut Criterion) {
     let mut group = c.benchmark_group("encode_by_length");
 
     // Build inputs of increasing character length
-    for &char_len in &[10, 50, 100, 250, 500, 1000, 2000, 5000] {
+    for &char_len in &[10, 20, 36, 50, 100, 250] {
         // Find a sentence at least this long, or skip
         let Some(s) = sentences.iter().find(|s| s.len() >= char_len) else {
             continue;

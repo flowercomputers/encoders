@@ -1,4 +1,3 @@
-import ese
 import numpy as np
 import torch
 from sentence_transformers import SentenceTransformer
@@ -8,6 +7,11 @@ class OurSentenceTransformerWrapper:
     """sentence-transformers compatible wrapper around our encoder."""
 
     def __init__(self):
+        # Only needed for "ours": the maturin extension from api-py, which
+        # the other models do not require to be built.
+        import ese
+
+        self._ese = ese
         self.max_seq_length = 512
         self._dimensions = ese.DIMENSIONS
         self.similarity_fn_name = "cosine"
@@ -24,7 +28,7 @@ class OurSentenceTransformerWrapper:
         convert_to_numpy=True,
         **kwargs,
     ):
-        return ese.encode(sentences)
+        return self._ese.encode(sentences)
 
     def get_sentence_embedding_dimension(self):
         return self._dimensions
