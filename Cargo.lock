@@ -1029,7 +1029,7 @@ dependencies = [
 
 [[package]]
 name = "ese"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "ese-unicode",
  "rayon",
@@ -1056,7 +1056,7 @@ dependencies = [
 
 [[package]]
 name = "ese-unicode"
-version = "17.0.0"
+version = "17.0.1"
 dependencies = [
  "unicode-general-category",
  "unicode-normalization",
