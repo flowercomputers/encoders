@@ -3,8 +3,9 @@
 <div align="right">
 
 [
-![Current version](https://img.shields.io/crates/v/encoders)
 ![Total downloads](https://img.shields.io/crates/d/encoders)
+![Current version](https://img.shields.io/crates/v/encoders)
+![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.24023298.svg)
 ![Licensed Apache-2.0](https://img.shields.io/github/license/flowercomputers/encoders)
 ](https://crates.io/crates/encoders)
 
