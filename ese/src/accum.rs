@@ -46,6 +46,9 @@ pub struct Accumulator<E: Elem, const D: usize> {
     boosted_weight: f32,
     boosted: u32,
     count: u32,
+    /// Tokens seen so far, pooled or dropped; stops pooling at `limit`.
+    produced: u32,
+    limit: u32,
 }
 
 #[inline(always)]
@@ -113,6 +116,8 @@ impl<E: Elem, const D: usize> Accumulator<E, D> {
             core::ptr::addr_of_mut!((*p).boosted_weight).write(0.0);
             core::ptr::addr_of_mut!((*p).boosted).write(0);
             core::ptr::addr_of_mut!((*p).count).write(0);
+            core::ptr::addr_of_mut!((*p).produced).write(0);
+            core::ptr::addr_of_mut!((*p).limit).write(u32::MAX);
             slot.assume_init_mut()
         }
     }
@@ -123,9 +128,39 @@ impl<E: Elem, const D: usize> Accumulator<E, D> {
         self.count
     }
 
+    /// Stop after `max_tokens` tokens (pooled or dropped unknowns), the way
+    /// `tokenizers` truncation does before model2vec drops `[UNK]` ids.
+    /// `0` means no limit.
+    #[inline(always)]
+    pub fn set_limit(&mut self, max_tokens: usize) {
+        self.limit = if max_tokens == 0 {
+            u32::MAX
+        } else {
+            max_tokens.min(u32::MAX as usize) as u32
+        };
+    }
+
+    /// Whether the token limit has been reached; later tokens are ignored.
+    #[inline(always)]
+    pub fn full(&self) -> bool {
+        self.produced >= self.limit
+    }
+
+    /// Count a token that is not pooled (a dropped unknown) toward the limit.
+    #[inline(always)]
+    pub fn skip(&mut self) {
+        if !self.full() {
+            self.produced += 1;
+        }
+    }
+
     /// Add a row stored with exponent `exp` (always 0 for f32 rows).
     #[inline(always)]
     pub fn add(&mut self, row: &'static [E; D], exp: u8) {
+        if self.produced >= self.limit {
+            return;
+        }
+        self.produced += 1;
         if exp == 0 {
             if self.npending == BATCH {
                 self.drain();
@@ -359,6 +394,20 @@ mod tests {
         acc.add(&[3, 1], 8);
         let out = acc.finish(&[1.0, 1.0], &[1.0, 1.0], false);
         assert!((out[0] - 4.0 / 256.0).abs() < 1e-7 && (out[1] - 2.0 / 256.0).abs() < 1e-7);
+    }
+
+    #[test]
+    fn limit_counts_skipped_tokens() {
+        let mut slot = MaybeUninit::uninit();
+        let acc = Accumulator::<f32, 1>::init(&mut slot);
+        acc.set_limit(3);
+        acc.add(&[1.0], 0);
+        acc.skip(); // a dropped [UNK] still uses up a position
+        acc.add(&[3.0], 0);
+        acc.add(&[100.0], 0); // past the limit
+        assert!(acc.full());
+        assert_eq!(acc.count(), 2);
+        assert_eq!(acc.finish(&[0.0], &[1.0], false), [2.0]);
     }
 
     #[test]

@@ -38,6 +38,8 @@ pub(crate) struct Spec {
     pub vocab: Vec<(String, usize)>,
     /// Contents of `added_tokens` entries flagged `special`.
     pub special_tokens: Vec<String>,
+    /// `truncation.max_length`, if the tokenizer truncates.
+    pub max_tokens: Option<usize>,
 }
 
 pub(crate) fn parse(path: &Path) -> Result<Spec, Error> {
@@ -163,6 +165,7 @@ pub(crate) fn parse(path: &Path) -> Result<Spec, Error> {
         unk_id,
         vocab,
         special_tokens,
+        max_tokens: tk["truncation"]["max_length"].as_u64().map(|n| n as usize),
     })
 }
 
