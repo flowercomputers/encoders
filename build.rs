@@ -171,8 +171,11 @@ const CATALOG: &[ModelSpec] = &[
     },
 ];
 
-/// Used when no model feature is enabled.
-const DEFAULT_MODEL: &str = "bekko-static-v1-slim-50k";
+/// Used when no model feature is enabled, truncated to `DEFAULT_DIMS` unless
+/// an mrl-* feature says otherwise. Naming the model explicitly gets its
+/// native width like any other model.
+const DEFAULT_MODEL: &str = "bekko-static-v1-slim-100k";
+const DEFAULT_DIMS: usize = 512;
 
 const DIM_FEATURES: &[(&str, usize)] = &[
     ("mrl-1024", 1024),
@@ -190,8 +193,8 @@ fn main() {
     println!("cargo:rerun-if-env-changed=ESE_CACHE_DIR");
     let out = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR"));
 
-    let model = selected_model();
-    let dims = selected_dims(model);
+    let (model, is_default) = selected_model();
+    let dims = selected_dims(model).or(if is_default { Some(DEFAULT_DIMS) } else { None });
     let quant = selected_quant();
 
     let docs_rs = env::var_os("DOCS_RS").is_some();
@@ -253,14 +256,18 @@ fn feature_on(name: &str) -> bool {
     .is_some()
 }
 
-fn selected_model() -> &'static ModelSpec {
+/// The selected model and whether it was chosen by default (no feature).
+fn selected_model() -> (&'static ModelSpec, bool) {
     let on: Vec<&ModelSpec> = CATALOG.iter().filter(|m| feature_on(m.feature)).collect();
     match on.as_slice() {
-        [] => CATALOG
-            .iter()
-            .find(|m| m.feature == DEFAULT_MODEL)
-            .expect("DEFAULT_MODEL is in the catalog"),
-        [m] => m,
+        [] => (
+            CATALOG
+                .iter()
+                .find(|m| m.feature == DEFAULT_MODEL)
+                .expect("DEFAULT_MODEL is in the catalog"),
+            true,
+        ),
+        [m] => (m, false),
         many => panic!(
             "encoders: several models selected ({}). Cargo features are additive: \
              depend on encoders with `default-features = false` and enable exactly one of {}.",

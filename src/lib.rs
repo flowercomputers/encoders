@@ -16,10 +16,11 @@
 //!
 //! - One model feature, named after the model (`bekko-static-v1-slim-32k`,
 //!   `potion-base-8m`, ...). With none, the current default is
-//!   `bekko-static-v1-slim-50k`; the default may change between major
-//!   versions, so name a model if you store embeddings.
+//!   `bekko-static-v1-slim-100k` truncated to 512 dimensions; the default may
+//!   change between major versions, so name a model if you store embeddings.
 //! - `mrl-1024` ... `mrl-32`: truncate a Matryoshka-trained model to a width
-//!   it was trained at. Omit for the native width.
+//!   it was trained at. Omit for the model's native width (or 512 for the
+//!   unnamed default).
 //! - `int16` (default), `int8` or `float32`: how the table is stored. An
 //!   explicit `int8` or `float32` overrides the default.
 //! - `rayon`: [`encode`] goes parallel from [`PARALLEL_MIN`] texts.

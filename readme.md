@@ -30,16 +30,16 @@ Encoders is fast. Here's some througput numbers on an Apple M3 Pro, with the enc
 
 > [!WARNING]
 > If you store embeddings from this crate, you should explicitly [select a model feature](https://github.com/flowercomputers/encoders/blob/791c5caaf24e590e2095ace17df137dc652d2739/Cargo.toml#L33-L52)!
-> _**We will change the default model between major versions**_ as better models become available!
+> _**We will change the default model and features between major versions**_ as better models become available!
 
 ```toml
 [dependencies]
-encoders = { version = "1", features = ["bekko-static-v1-slim-32k", "mrl-256", "int8", "rayon"] }
+encoders = { version = "2", features = ["bekko-static-v1-slim-32k", "mrl-256", "int8", "rayon"] }
 ```
 
 ### Features:
 
-- **Model.** With none enabled you get the current default, `bekko-static-v1-slim-50k`.
+- **Model.** With none enabled you get the current default, `bekko-static-v1-slim-100k` truncated to 512 dimensions. Naming a model explicitly gets its native width.
 - **Dimensions.** `mrl-1024` down to `mrl-32` truncates a Matryoshka-trained model to one of the widths it was trained at. Omit it for the model's native width; asking for a width a model was not trained at fails the build!
 - **Internal Type.** `int16` is the default, as 16-bit quantization produces almost indistinguishable outputs from f32 in practice (at half the size). `int8` is a quarter the size, with cosine agreement against f32 above 0.999 on multi-token text (so also pretty much indistinguishable).
 - **`rayon`** makes `encode` parallel for large batches. This is only likely to improve performance if your workload is routinely encoding very large batches (a couple hundred or more inputs).
@@ -73,7 +73,7 @@ The model [hotchpotch/bekko-static-embedding-v1](https://huggingface.co/hotchpot
       <td align="right">258 / 514 / 1026 MiB</td>
     </tr>
     <tr>
-      <td><a href="https://huggingface.co/flower-computer/bekko-static-v1-slim-100k"><code>bekko-static-v1-slim-100k</code></a></td>
+      <td><a href="https://huggingface.co/flower-computer/bekko-static-v1-slim-100k"><b><code>bekko-static-v1-slim-100k</code></b></a> (default, at <code>mrl-512</code>)</td>
       <td align="right">100k</td>
       <td align="right">25</td>
       <td align="right">52.9</td>
@@ -89,12 +89,12 @@ The model [hotchpotch/bekko-static-embedding-v1](https://huggingface.co/hotchpot
       <td align="right">129 / 257 / 513 MiB</td>
     </tr>
     <tr>
-      <td><a href="https://huggingface.co/flower-computer/bekko-static-v1-slim-50k"><b><code>bekko-static-v1-slim-50k</code></b></a> (default)</td>
+      <td><a href="https://huggingface.co/flower-computer/bekko-static-v1-slim-50k"><code>bekko-static-v1-slim-50k</code></a></td>
       <td align="right">50k</td>
       <td align="right">25</td>
       <td align="right">50.2</td>
       <td align="right">40.4</td>
-      <td align="right">65 / <b>129</b> / 257 MiB</td>
+      <td align="right">65 / 129 / 257 MiB</td>
     </tr>
     <tr>
       <td><a href="https://huggingface.co/flower-computer/bekko-static-v1-slim-32k"><code>bekko-static-v1-slim-32k</code></a></td>
