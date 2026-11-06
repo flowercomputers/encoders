@@ -97,15 +97,9 @@ pub enum Error {
     /// Reading model files or writing the generated ones failed.
     Io(std::io::Error),
     /// The hub answered a download with an error status.
-    Http {
-        url: String,
-        status: i32,
-    },
+    Http { url: String, status: i32 },
     /// A download failed before any HTTP status arrived.
-    Network {
-        url: String,
-        source: minreq::Error,
-    },
+    Network { url: String, source: minreq::Error },
     /// A model JSON file (`config.json`, `modules.json`, `tokenizer.json`)
     /// did not parse.
     Json {

@@ -15,10 +15,10 @@
 //!   on first run. Outside the `rayon` build, encoders and candle are pinned
 //!   to one thread.
 
-use criterion::{Criterion, SamplingMode, Throughput, criterion_group, criterion_main};
 use candle_core::{Device, Tensor};
 use candle_nn::VarBuilder;
 use candle_transformers::models::bert::{BertModel, Config, DTYPE};
+use criterion::{Criterion, SamplingMode, Throughput, criterion_group, criterion_main};
 use model2vec_rs::model::StaticModel;
 use std::fs;
 use std::hint::black_box;
@@ -29,7 +29,11 @@ use tokenizers::{PaddingParams, Tokenizer, TruncationParams};
 mod common;
 
 /// Criterion id of the encoders bar; `--features rayon` records a second one.
-const ENCODERS_ID: &str = if cfg!(feature = "rayon") { "encoders-rayon" } else { "encoders" };
+const ENCODERS_ID: &str = if cfg!(feature = "rayon") {
+    "encoders-rayon"
+} else {
+    "encoders"
+};
 use common::{load_sentences, target_dir};
 
 const BATCH: usize = 4096;

@@ -29,13 +29,18 @@ use tantivy::{Index, doc};
 mod common;
 
 /// Criterion id of the encoders bar; `--features rayon` records a second one.
-const ENCODERS_ID: &str = if cfg!(feature = "rayon") { "encoders-rayon" } else { "encoders" };
+const ENCODERS_ID: &str = if cfg!(feature = "rayon") {
+    "encoders-rayon"
+} else {
+    "encoders"
+};
 use common::{load_sentences, target_dir};
 
 /// The `tokenizer.json` ese-build downloaded for the compiled model. It sits
 /// at the cache root or, for sentence-transformers layouts, one folder down.
 fn tokenizer_path() -> PathBuf {
-    let root = target_dir().join("ese-cache")
+    let root = target_dir()
+        .join("ese-cache")
         .join(encoders::model::MODEL_ID.replace('/', "--"))
         .join(encoders::model::MODEL_REVISION.replace('/', "--"));
     let direct = root.join("tokenizer.json");
