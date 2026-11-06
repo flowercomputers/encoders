@@ -273,23 +273,23 @@ The idea behind encoders (and the crate that underpins it, [`ese`](./ese)) is si
 
 ![Chart comparing queries per second on encoders vs. other methods to embed text](https://raw.githubusercontent.com/flowercomputers/encoders/refs/heads/master/.github/qps.png)
 
-**Tokenization.** [`ese`](./ese) reimplements the BERT normalizer, pre-tokenizer and WordPiece from Hugging Face's `tokenizers` crate as one streaming pass that never touches the heap. This is how we're able to exceed the throughput of just the tokenization step in most models. ASCII goes through a per-model byte table; every other character costs one lookup into precomputed Unicode tables (in the [`ese-unicode` crate](./ese-unicode)) for its class and normalized form. Building with the `tests` feature computes reference embeddings with the real `tokenizers` crate, and the test suite checks encoders' output against them.
+**Build time.** [`ese-build`](./ese-build) downloads the model, reads how it expects text to be tokenized and pooled from the model's own files, quantizes the weights, and writes them out as a perfect-hash table keyed by vocabulary entry. That table is compiled into your binary, so there is nothing to load or initialize at runtime.
 
-**Lookup.** The vocabulary is a two-level perfect hash generated at build time. The hash folds a key one byte at a time, so its state after each byte is already the hash of that prefix, and WordPiece hashes every candidate prefix of a word in a single pass instead of rehashing each one. A lookup is a bucket, a per-bucket seed, a slot, and a comparison against that slot's stored verifier, which rejects strings that aren't in the vocabulary. Rows are padded to whole 64-byte cache lines, and the verifier's low byte carries the row's scale exponent (see below), so one lookup yields everything needed to pool the token.
+**Tokenization.** [`ese`](./ese) reimplements the BERT tokenizer pipeline from Hugging Face's `tokenizers` crate as a single streaming pass that never allocates, with Unicode handled by precomputed tables in [`ese-unicode`](./ese-unicode). That's a large part of why encoders can completely embed text faster than the tokenizers crate (and thus most models) can tokenize it, shown in the throughput benchmark above. The test suite checks the output against the real `tokenizers` crate for correctness' sake.
 
-**Quantization.** With `int16` (the default) or `int8`, every dimension gets its own minimum and scale, since columns of these models can differ in magnitude by several times. A handful of rows are much smaller than the rest: an untrained `[UNK]`, or frequent tokens down-weighted during distillation—those are scaled up by a power of two before quantizing so that they keep their resolution. Any row within 8x of the median (nearly all of them) is stored as-is.
+**Lookup.** Each token resolves to its weights with a single probe into the hash table, and WordPiece hashes every candidate piece of a word in one pass rather than one candidate at a time.
 
-**Accumulation.** Rows aren't summed as tokens arrive. Their addresses are collected, up to 256 at a time, and then summed one 32-column block at a time in integer registers (8-bit rows in 16-bit lanes, 16-bit rows in 32-bit lanes, sized so 256 rows can't overflow). Each row byte is read exactly once and the running sum never round-trips through memory. The few scaled-up rows take a separate floating-point path. Dequantization, the mean, and optional normalization happen once at the end, written straight into the output, which `encode_single` returns by value on the stack.
+**Quantization.** Weights are stored as 16-bit integers by default, or 8-bit with `int8`, each dimension with its own scale. That halves or quarters the table, and the output stays nearly indistinguishable from full precision.
 
-**Unbounded input.** When 256 rows are pending they're drained into a running sum and collection starts over, so there is no token limit: a three-word query and an entire book take the same code path, and every token of the book counts. This is a real difference from some other implementations. `model2vec-rs`, for example, truncates to 512 tokens by default, so very long inputs embed differently there.
+**Pooling.** Token weights are summed in integer registers, so each byte of the table is read once, and converted back to floating point once at the end. Sums drain into a running total every few hundred tokens, so there's no input length limit: a whole book embeds the same way a query does, and every token counts. You shouldn't embed a whole book, though... these are sentence level models!
 
-**Benchmarks.** The charts come from the [`bench`](./bench) crate (Criterion) and its Python companion in [`bench/py`](./bench/py). Every workload runs over questions from the [GooAQ](https://huggingface.co/datasets/sentence-transformers/gooaq) dataset. To regenerate both charts on your own machine:
+### Benchmarking
+
+The charts come from the [`bench`](./bench) crate (Criterion) and its Python companion in [`bench/py`](./bench/py). Every workload runs over questions from the [GooAQ](https://huggingface.co/datasets/sentence-transformers/gooaq) dataset. To regenerate both charts on your own machine:
 
 ```console
 $ uv run --project bench/py bench/py/charts.py
 ```
-
-The workspace has four crates. `encoders` is the one above. [`ese`](./ese) is the runtime: a byte-for-byte reimplementation of the BERT tokenizer pipeline, mean pooling in integer lanes, and a perfect-hash table over the vocabulary. [`ese-build`](./ese-build) runs in [`build.rs`](./build.rs): it fetches a model, works out how it is laid out and how it expects to be pooled from its own files, quantizes it, and writes the tables. [`ese-unicode`](./ese-unicode) is the 64 KB of Unicode tables the tokenizer needs, generated from pinned crates and checked in.
 
 ### Caveats emptor
 
