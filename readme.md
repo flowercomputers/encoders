@@ -1,4 +1,4 @@
-![Our mouse Scott](.github/willie.svg)
+![Our mouse Scott](https://raw.githubusercontent.com/flowercomputers/encoders/master/.github/willie.svg)
 
 # encoders
 
@@ -38,7 +38,7 @@ encoders = { version = "1", features = ["bekko-static-v1-slim-32k", "mrl-256", "
 
 ### bekko models
 
-![](.github/quality-vs-vocab.png)
+![](https://raw.githubusercontent.com/flowercomputers/encoders/master/.github/quality-vs-vocab.png)
 
 The model [hotchpotch/bekko-static-embedding-v1](https://huggingface.co/hotchpotch/bekko-static-embedding-v1) represents the current state-of-the-art as far as static embedding. We've trained a family of models derived from this model to shrink the vocabulary (and thus the model size), specifically for use in encoders. These are multilingual models, trained with MRL so their vectors can be truncated (reducing vector and model size at the cost of embedding quality), and licensed MIT.
 
