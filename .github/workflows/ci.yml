@@ -1,0 +1,125 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  ESE_CACHE_DIR: ${{ github.workspace }}/.ese-models
+  SMALL: potion-base-2m,int8
+
+jobs:
+  fmt:
+    name: rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all --check
+
+  clippy:
+    name: clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/cache@v4
+        with:
+          path: .ese-models
+          key: ese-models-${{ hashFiles('build.rs') }}
+      - run: cargo clippy --workspace --all-targets --no-default-features --features "$SMALL,rayon" -- -D warnings
+
+  docs:
+    name: rustdoc
+    runs-on: ubuntu-latest
+    env:
+      RUSTDOCFLAGS: -D warnings
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/cache@v4
+        with:
+          path: .ese-models
+          key: ese-models-${{ hashFiles('build.rs') }}
+      - run: cargo doc --workspace --exclude ese-py --no-deps --no-default-features --features "$SMALL"
+
+  libs:
+    name: ese / ese-build / ese-unicode tests
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test -p ese -p ese-build --features ese-build/test-data
+      - run: cargo test -p ese-unicode --release
+
+  encoders:
+    name: encoders (${{ matrix.features }}, ${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        features:
+          - potion-base-2m,int8
+          - potion-base-2m,float32
+          - static-retrieval-mrl-en-v1,mrl-64,int16
+        include:
+          - os: ubuntu-latest
+            features: default
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/cache@v4
+        with:
+          path: .ese-models
+          key: ese-models-${{ hashFiles('build.rs') }}
+      - name: test
+        run: |
+          if [ "${{ matrix.features }}" = default ]; then
+            cargo test --features tests,rayon
+          else
+            cargo test --no-default-features --features "tests,rayon,${{ matrix.features }}"
+          fi
+
+  package:
+    name: publish dry run
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/cache@v4
+        with:
+          path: .ese-models
+          key: ese-models-${{ hashFiles('build.rs') }}
+      - run: cargo publish --workspace --exclude ese-py --dry-run
+
+  python:
+    name: api-py (cargo check)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/cache@v4
+        with:
+          path: .ese-models
+          key: ese-models-${{ hashFiles('build.rs') }}
+      - run: cargo check -p ese-py

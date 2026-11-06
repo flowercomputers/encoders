@@ -1,6 +1,6 @@
 [package]
 name = "ese-build"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "build.rs support for ese: fetch a sentence-transformers or model2vec static embedding model and generate its compiled-in tables"
 license = "Apache-2.0"

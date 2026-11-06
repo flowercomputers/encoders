@@ -2,7 +2,7 @@
 
 # encoders
 
-The encoders crate is the **fastest way to semantically embed text** on CPU.[^1] We take [a collection of state-of-the-art static embedding models](#configuration-and-model-selection), and compile them directly into Rust code. That means no downloading models at runtime, no GPU, no inference runtime, no Python... just nanosecond scale text embedding! <!-- TODO: [Read our article all about it here!](https://flowercomputers.com/) -->
+The encoders crate is the **fastest way to semantically embed text** on CPU.[^1] We take [a collection of state-of-the-art](#configuration-and-model-selection) static embedding models, and compile them directly into Rust code. That means no downloading models at runtime, no GPU, no inference runtime, no Python... just nanosecond scale text embedding! <!-- TODO: [Read our article all about it here!](https://flowercomputers.com/) -->
 
 ```rust
 let query = encoders::encode_single("What is the capital of France?");
@@ -23,18 +23,20 @@ $ cargo add encoders --features='potion-retrieval-32m, int8, mrl-256, rayon'
 ## Configuration and model selection
 
 > [!WARNING]
-> If you store embeddings from this crate, select a model feature explicitly: that pins the model so that crate updates cannot silently change your vectors.
-> _**We will change the default model as the state of the art changes!**_
+> If you store embeddings from this crate, you should explicitly [select a model feature](https://github.com/flowercomputers/encoders/blob/791c5caaf24e590e2095ace17df137dc652d2739/Cargo.toml#L33-L52)!
+> _**We will change the default model between major versions**_ as better models become available!
 
 ```toml
 [dependencies]
 encoders = { version = "1", features = ["bekko-static-v1-slim-32k", "mrl-256", "int8", "rayon"] }
 ```
 
+### Features:
+
 - **Model.** With none enabled you get the current default, `bekko-static-v1-slim-50k`.
-- **Width.** `mrl-1024` down to `mrl-32` truncates a Matryoshka-trained model to one of the widths it was trained at. Omit it for the model's native width; asking for a width a model was not trained at fails the build!
-- **Storage.** `int16` is the default, as they're indistinguishable from f32 in practice at half the size. `int8` is a quarter the size and the fastest, with cosine agreement against f32 above 0.999 on multi-token text.
-- **`rayon`** makes `encode` parallel for large batches.
+- **Dimensions.** `mrl-1024` down to `mrl-32` truncates a Matryoshka-trained model to one of the widths it was trained at. Omit it for the model's native width; asking for a width a model was not trained at fails the build!
+- **Internal Type.** `int16` is the default, as 16-bit quantization produces almost indistinguishable outputs from f32 in practice (at half the size). `int8` is a quarter the size, with cosine agreement against f32 above 0.999 on multi-token text (so also pretty much indistinguishable).
+- **`rayon`** makes `encode` parallel for large batches. This is only likely to improve performance if your workload is routinely encoding very large batches (a couple hundred or more inputs).
 
 ### bekko models
 
@@ -253,7 +255,7 @@ The workspace has four crates. `encoders` is the one above. [`ese`](./ese) is th
 
 ### Caveats emptor
 
-**Embedding quality.** Encoders only works with static embedding models: each token has one fixed vector and a text is the mean of its tokens' vectors. There is no attention, so word order and context are invisible, and quality is a step below even small transformer encoders. On retrieval benchmarks the gap is real but not enormous; the bekko family scores about 49 to 54 NanoBEIR against the low 60s for a small transformer. In exchange, embedding some text costs nanoseconds instead of a few milliseconds, with no GPU, no runtime dependencies, and no startup cost. For a lot of (if not most) search, dedup, clustering, and routing work, that is the right trade (and we hope the speed makes up for the rest).
+**Embedding quality.** Encoders only works with static embedding models: each token has one fixed vector and a text is the mean of its tokens' vectors. There is no attention, so word order and context are invisible, and quality is a step below even small transformer encoders. On retrieval benchmarks the gap is real but not enormous; the bekko family scores about 49 to 54 on NanoBEIR against the low 60s for a small transformer. In exchange, embedding text runs in the order of nanoseconds instead of milliseconds. For a lot of (if not most) search, dedup, clustering, and routing work, that is the right trade (and we hope the speed makes up for the rest).
 
 **Binary size and compile time.** The model's lookup table is embedded in your executable: from a few MB for a small model at a narrow width to a few hundred MB for a large vocabulary at full width in f32. Any embedding model needs its weights at runtime somehow; this crate just puts them in the binary rather than downloading/loading them at runtime. The first build of a model downloads it from the Hugging Face hub (into `target/ese-cache`, so it's cleaned up by `cargo clean`) and the final link of a large table takes a while. You also _really, really need to compile this with optimizations on_... give LLVM a chance to autovectorize!
 
@@ -261,4 +263,4 @@ The workspace has four crates. `encoders` is the one above. [`ese`](./ese) is th
 
 The code in this repo is licensed Apache-2.0. However, each model has its own license, which you must respect; it is available at build time in the summary and at run time as `encoders::model::LICENSE`.
 
-[^1]: Any person wishing to dispute this claim is required to either: challenge us to hand-to-hand combat at our office in Brooklyn, New York, _OR_ create an issue on this repository referencing relevant benchmarks.
+[^1]: Any person wishing to dispute this claim is invited to either: challenge the [Flower Computer team](https://www.flowercomputer.com/about/) to hand-to-hand combat at our office in Brooklyn, New York, _OR_ create an issue on this repository referencing relevant benchmarks.

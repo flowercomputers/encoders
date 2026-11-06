@@ -183,13 +183,19 @@ const DIM_FEATURES: &[(&str, usize)] = &[
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
+    // Where downloaded models are kept; defaults to target/ese-cache.
+    println!("cargo:rerun-if-env-changed=ESE_CACHE_DIR");
     let out = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR"));
 
     let model = selected_model();
     let dims = selected_dims(model);
     let quant = selected_quant();
 
-    let summary = Builder::hub(model.repo)
+    let mut builder = Builder::hub(model.repo);
+    if let Some(dir) = env::var_os("ESE_CACHE_DIR").filter(|d| !d.is_empty()) {
+        builder = builder.cache_dir(dir);
+    }
+    let summary = builder
         .revision(model.revision)
         .dims(dims)
         .truncation_points(Some(model.dims))

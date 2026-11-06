@@ -29,10 +29,10 @@ fn extract_questions(path: &PathBuf) -> Vec<String> {
     for row in iter {
         let row = row.expect("failed to read row");
         for (name, field) in row.get_column_iter() {
-            if name == "question" || name == "sentence1" {
-                if let Field::Str(s) = field {
-                    sentences.push(s.clone());
-                }
+            if (name == "question" || name == "sentence1")
+                && let Field::Str(s) = field
+            {
+                sentences.push(s.clone());
             }
         }
     }

@@ -2,7 +2,7 @@
 name = "encoders"
 version = "1.0.0"
 edition = "2024"
-description = "Static embedding models (sentence-transformers static-mrl and model2vec potion families) compiled into the binary with ese"
+description = "The fastest way to semantically embed text inputs"
 readme = "readme.md"
 license-file = "license"
 authors = ["W. Turner Abney <wta@ieee.org>"]
