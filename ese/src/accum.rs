@@ -240,13 +240,13 @@ impl<E: Elem, const D: usize> Accumulator<E, D> {
             if normalize {
                 // SAFETY: `out[off..off + s.len()]` was written just above.
                 let ys = unsafe { core::slice::from_raw_parts(o.add(off), s.len()) };
-                let mut chunks = ys.chunks_exact(8);
-                for c in &mut chunks {
+                let (chunks, rest) = ys.as_chunks::<8>();
+                for c in chunks {
                     for (l, y) in sq.iter_mut().zip(c) {
                         *l += y * y;
                     }
                 }
-                for (l, y) in sq.iter_mut().zip(chunks.remainder()) {
+                for (l, y) in sq.iter_mut().zip(rest) {
                     *l += y * y;
                 }
             }

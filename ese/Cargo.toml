@@ -9,6 +9,7 @@ homepage = "https://github.com/flowercomputers/encoders/tree/master/ese"
 repository = "https://github.com/flowercomputers/encoders"
 keywords = ["embeddings", "model2vec", "nlp", "search"]
 categories = ["text-processing", "artificial-intelligence", "compression", "encoding", "science"]
+rust-version = "1.88"
 
 [features]
 rayon = ["dep:rayon"]
