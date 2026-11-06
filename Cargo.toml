@@ -30,8 +30,8 @@ lto = "fat"
 [features]
 default = []
 
-# Exactly one model. Cargo features are additive, so to pick a non-default
-# model depend on this crate with `default-features = false`.
+# At most one model; with none, build.rs picks the current default
+# (bekko-static-v1-slim-100k at 512 dimensions). Enabling two fails the build.
 bekko-static-v1-slim-100k = []
 bekko-static-v1-slim-75k = []
 bekko-static-v1-slim-50k = []
@@ -51,8 +51,9 @@ nife-mxbai-embed-large-v1 = []
 nife-gte-modernbert-base = []
 m2v-base-output = []
 
-# Truncation. Only the Matryoshka-trained sentence-transformers models accept
-# a width below their native 1024; the build fails otherwise.
+# Truncation. Only Matryoshka-trained models (the bekko family and the
+# static-*-mrl models) accept a width below their native one, and only a
+# width they were trained at; the build fails otherwise.
 mrl-1024 = []
 mrl-768 = []
 mrl-512 = []

@@ -1,16 +1,16 @@
-//! Extremely Static Embeddings: the model-agnostic runtime.
+//! Embedded Static Embeddings (ese)
 //!
 //! This crate holds the tokenizer, pooling and perfect-hash lookup code. It
 //! contains no model. A model is compiled in by a crate that
 //!
-//! 1. calls [`ese_build::Builder::generate`](https://github.com/flowercomputers/ese)
+//! 1. calls [`ese_build::Builder::generate`](https://docs.rs/ese-build/latest/ese_build/struct.Builder.html#method.generate)
 //!    from its `build.rs`, and
 //! 2. invokes [`include_model!`] at the top level of its `lib.rs`.
 //!
 //! The `encoders` crate at the root of this workspace does exactly that for
 //! a catalog of models selected by cargo feature, and is the one to depend
-//! on if you just want embeddings. Copy its `build.rs` to compile in a
-//! different model.
+//! on if you just want embeddings. Follow the lead of its `build.rs` to
+//! use this crate with a different model.
 //!
 //! The runtime reproduces the `BertNormalizer` + `BertPreTokenizer` +
 //! `WordPiece` pipeline of the `tokenizers` crate, including its literal
@@ -62,7 +62,8 @@ pub struct ModelParams<E: 'static, const D: usize> {
     pub drop_unk: bool,
     /// L2-normalize the pooled vector.
     pub normalize: bool,
-    /// Per-column dequantization: `value = quant_min[i] + stored * quant_scale[i]`.
+    /// Per-column dequantization: a stored value `q` in column `i` of a row
+    /// with exponent `exp` means `2^-exp * (quant_min[i] + q * quant_scale[i])`.
     /// Ignored for f32 rows.
     pub quant_min: &'static [f32; D],
     pub quant_scale: &'static [f32; D],

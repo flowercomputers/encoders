@@ -1,4 +1,4 @@
-//! Build-script support for [`ese`](https://github.com/flowercomputers/ese).
+//! Build-script support for [`ese`](https://github.com/flowercomputers/encoders/tree/master/ese).
 //!
 //! Point a [`Builder`] at a sentence-transformers or model2vec static embedding
 //! model from `build.rs`, call [`Builder::generate`], and then invoke
@@ -52,9 +52,10 @@ pub use tokenizer::TokenizerFamily;
 pub enum Quant {
     /// Unquantized `f32`.
     F32,
-    /// Linear 16-bit quantization over the global min/max.
+    /// Linear 16-bit quantization with each column's own min and scale;
+    /// rows far smaller than the median are boosted by a power of two first.
     U16,
-    /// Linear 8-bit quantization over the global min/max.
+    /// Linear 8-bit quantization, same scheme as [`Quant::U16`].
     U8,
 }
 
@@ -93,15 +94,20 @@ impl fmt::Display for Quant {
 /// Everything that can go wrong while generating a model.
 #[derive(Debug)]
 pub enum Error {
+    /// Reading model files or writing the generated ones failed.
     Io(std::io::Error),
+    /// The hub answered a download with an error status.
     Http {
         url: String,
         status: i32,
     },
+    /// A download failed before any HTTP status arrived.
     Network {
         url: String,
         source: minreq::Error,
     },
+    /// A model JSON file (`config.json`, `modules.json`, `tokenizer.json`)
+    /// did not parse.
     Json {
         file: PathBuf,
         source: serde_json::Error,
@@ -110,8 +116,12 @@ pub enum Error {
     MissingFile(String),
     /// `modules.json` describes something other than a static embedding model.
     NotStatic(String),
+    /// `tokenizer.json` describes a pipeline the runtime cannot reproduce.
     UnsupportedTokenizer(String),
+    /// The safetensors file holds no usable embedding matrix or uses an
+    /// unsupported dtype.
     UnsupportedTensor(String),
+    /// Anything else: inconsistent model files or builder settings.
     Invalid(String),
 }
 
@@ -247,6 +257,7 @@ impl Builder {
         self
     }
 
+    /// Storage type of the generated rows. Defaults to [`Quant::F32`].
     pub fn quant(mut self, quant: Quant) -> Self {
         self.quant = quant;
         self
@@ -259,7 +270,9 @@ impl Builder {
         self
     }
 
-    /// Where downloaded files are kept. Defaults to `target/ese-cache`.
+    /// Where downloaded files are kept. Defaults to `target/ese-cache` when
+    /// `OUT_DIR` is inside a `target` directory (so a workspace shares one
+    /// download), otherwise an `ese-cache` directory inside `OUT_DIR`.
     pub fn cache_dir(mut self, dir: impl Into<PathBuf>) -> Self {
         self.cache_dir = Some(dir.into());
         self
@@ -431,22 +444,32 @@ impl Builder {
 #[derive(Clone, Debug)]
 pub struct Summary {
     /// Bytes of generated tables the consumer embeds with `include_bytes!`:
-    /// the rows, verifiers, seeds and row exponents. This is what the model
-    /// adds to the final binary, give or take the few KB of constants.
+    /// the rows, the verifiers (which also carry the row exponents) and the
+    /// seeds. This is what the model adds to the final binary, give or take
+    /// the few KB of constants.
     pub embedded_bytes: u64,
+    /// Hub repo id, or the directory for a local model.
     pub model: String,
+    /// Hub revision the files came from; empty for a local model.
     pub revision: String,
+    /// `sentence-transformers` or `model2vec`, as detected.
     pub framework: &'static str,
     pub tokenizer: TokenizerFamily,
     pub vocab_size: usize,
+    /// Width of the stored embeddings before truncation.
     pub native_dims: usize,
+    /// Width of the generated embeddings.
     pub dims: usize,
     pub quant: Quant,
+    /// Slots in the perfect-hash table, a power of two at least `vocab_size`.
     pub table_size: usize,
+    /// Unknown tokens are dropped before pooling (model2vec semantics).
     pub drop_unk: bool,
+    /// Pooled vectors are L2-normalized.
     pub normalize: bool,
     /// Widths the model was trained at, as given to the builder.
     pub truncation_points: Vec<usize>,
+    /// Where the model's files were read from.
     pub cache_dir: PathBuf,
 }
 

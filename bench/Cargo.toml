@@ -5,7 +5,9 @@
 #   cargo bench -p encoders-bench --bench throughput
 #   cargo bench -p encoders-bench --bench embedders
 #
-# `py/` holds the sentence-transformers side (see py/qps.py).
+# Add `--features rayon` to record the parallel encoders bar as well.
+# `py/` holds the sentence-transformers side (py/qps.py) and the script that
+# runs everything and renders the readme charts (py/charts.py).
 
 [package]
 name = "encoders-bench"

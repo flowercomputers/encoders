@@ -1,9 +1,10 @@
 /// Storage type of an embedding element in the compiled-in table, and how
 /// raw stored values are summed.
 ///
-/// Dequantization is affine per column (`value = min + q * scale`), and the
-/// output is a mean, so the inner loop only ever sums raw stored values in
-/// `Acc` lanes. The per-column constants are applied once at the end.
+/// Dequantization is affine per column (`value = min + q * scale`, times
+/// `2^-exp` for the rare boosted row), and the output is a mean, so the inner
+/// loop only ever sums raw stored values in `Acc` lanes. The per-column
+/// constants are applied once at the end.
 pub trait Elem: Copy + Send + Sync + 'static {
     /// Lane type for the running sum of raw stored values.
     type Acc: Copy + Send + Sync + 'static;

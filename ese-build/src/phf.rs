@@ -15,9 +15,10 @@ use crate::Error;
 pub(crate) struct Phf {
     pub table_size: usize,
     pub num_buckets: usize,
-    /// Per-bucket displacement seed. Kept to 16 bits so the runtime's seed
-    /// table stays small enough for L1; the table is enlarged instead if a
-    /// bucket cannot be placed within that range.
+    /// Per-bucket displacement seed, one bucket per key. Kept to 16 bits so
+    /// the runtime's seed table costs two bytes per vocabulary entry; the
+    /// table is enlarged instead if a bucket cannot be placed within that
+    /// range.
     pub seeds: Vec<u16>,
     /// `slot -> index into the input key list`, `None` for empty slots.
     pub slots: Vec<Option<usize>>,

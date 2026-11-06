@@ -23,8 +23,8 @@ fn unknown<E: Elem, const D: usize>(
 /// `lookup(hash)` resolves a key hash (see [`phf`]) to its row and row
 /// exponent. `hashes[i]`, if present, is the key hash of `word[..=i]` as
 /// computed by the pre-tokenizer, so the pieces starting at 0 need no
-/// hashing pass here. A word that cannot be fully segmented, or was flagged overlong
-/// by the pre-tokenizer, becomes a single unknown token; `unk == None`
+/// hashing pass here. A word that cannot be fully segmented, or was flagged
+/// overlong by the pre-tokenizer, becomes a single unknown token; `unk == None`
 /// means unknown tokens are dropped (model2vec semantics). A literal special
 /// token is one exact lookup, and a literal unknown token follows the same
 /// UNK policy.

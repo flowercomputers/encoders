@@ -38,8 +38,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/flowercomputers/ese"
-Repository = "https://github.com/flowercomputers/ese"
+Homepage = "https://github.com/flowercomputers/encoders"
+Repository = "https://github.com/flowercomputers/encoders"
 
 [tool.maturin]
 features = [

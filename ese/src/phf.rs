@@ -36,21 +36,22 @@ pub const fn hash_key(key: &[u8]) -> u64 {
     fold(INIT, key)
 }
 
-/// Bucket of a folded key: the high bits of a 64x64 multiply, which is the
-/// same distribution as `% num_buckets` without the division.
+/// Bucket of a folded key: the high bits of a 64x64 multiply, which spreads
+/// uniform hashes as evenly as `% num_buckets` without the division.
 #[inline(always)]
 pub const fn bucket(h: u64, num_buckets: usize) -> usize {
     ((h as u128 * num_buckets as u128) >> 64) as usize
 }
 
 /// The seeded hash of a folded key. Its low bits pick the slot; the whole
-/// value is the verifier. Seeds are 16 bits so a model's whole seed table
-/// fits in L1.
+/// value is the verifier. Seeds are 16 bits, so the seed table costs two
+/// bytes per vocabulary entry (about 200 KB for a 100k vocabulary).
 ///
-/// The seed is mixed into the fully folded key, so two different keys under
-/// two different seeds collide only when their 64-bit hashes differ by
-/// exactly the seeds' difference. Mixing the seed in *before* the key let a
-/// different first byte cancel a different seed and produced false lookups.
+/// The seed is mixed into the fully folded key, and the mix is a bijection,
+/// so two different keys under two different seeds collide only when their
+/// 64-bit key hashes XOR to the XOR of the two scrambled seeds. Mixing the
+/// seed in *before* the key let a different first byte cancel a different
+/// seed and produced false lookups.
 #[inline(always)]
 pub const fn seeded(h: u64, seed: u16) -> u64 {
     let x = (h ^ (seed as u64).wrapping_mul(0x9E3779B97F4A7C15)).wrapping_mul(K);

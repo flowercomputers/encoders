@@ -1,6 +1,7 @@
-//! Dot product, cosine similarity and Euclidean distance over embeddings,
-//! each a single pass with eight independent accumulators (a serial float
-//! chain costs several times more on wide vectors).
+//! Dot product, norm, cosine similarity and Euclidean distance over
+//! embeddings. Each pass runs eight independent accumulators (a serial float
+//! chain costs several times more on wide vectors); dot, norm and distance
+//! are one pass each, cosine is three (a dot and two norms).
 
 #[inline]
 fn lanes(a: &[f32], b: &[f32], mut f: impl FnMut(f32, f32) -> f32) -> f32 {

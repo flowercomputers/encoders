@@ -8,9 +8,9 @@
 //!
 //! Character classes and normalized forms come from `ese-unicode`'s
 //! precomputed table, one lookup per non-ASCII character; ASCII is handled
-//! by a per-model byte table. Normalized characters go into a fixed stack buffer and a word is handed
-//! to the callback whenever whitespace, punctuation or a CJK character ends
-//! it. WordPiece turns any word longer than `max_word_len` characters into a
+//! by a per-model byte table. Normalized characters go into a fixed stack
+//! buffer and a word is handed to the callback whenever whitespace,
+//! punctuation or a CJK character ends it. WordPiece turns any word longer than `max_word_len` characters into a
 //! single unknown token, so a word that overflows the limit is reported as
 //! `overlong` and its remaining characters are not stored.
 
@@ -175,9 +175,9 @@ impl AsciiTable {
 
 /// Normalize `input` and call `f(word, kind, hashes)` for every pre-token,
 /// in order, where `hashes[i]` is the key hash of `word[..=i]` (empty for a
-/// literal special token). Normalization is BertNormalizer's: `clean_text`, CJK padding,
-/// accent stripping (NFD, drop non-spacing marks), lowercasing, each gated
-/// by its flag. Splitting is BertPreTokenizer's: whitespace separates,
+/// literal special token). Normalization is BertNormalizer's: `clean_text`,
+/// CJK padding, accent stripping (NFD, drop non-spacing marks), lowercasing,
+/// each gated by its flag. Splitting is BertPreTokenizer's: whitespace separates,
 /// punctuation is isolated. Special tokens are matched literally first.
 ///
 /// ASCII bytes take a table-driven path (one load, one branch per byte);

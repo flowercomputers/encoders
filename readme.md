@@ -14,9 +14,9 @@
 
 The encoders crate is the **fastest way to semantically embed text** on CPU.[^1] We take [a collection of state-of-the-art](#configuration-and-model-selection) static embedding models, and compile them directly into Rust code. That means no downloading models at runtime, no GPU, no inference runtime, no Python... just nanosecond scale text embedding.
 
-- [Read our article all about it here!](https://flowercomputer.com/news)
-- [encoders on crates.io](https://crates.io/crates/encoders)
 - [encoders on docs.rs](https://docs.rs/crate/encoders/latest)
+- [encoders on crates.io](https://crates.io/crates/encoders)
+- [_Read our article all about it here!_](https://flowercomputer.com/posts/even-faster-static-embedding/)
 
 ```rust
 let query = encoders::encode_single("What is the capital of France?");
@@ -36,9 +36,11 @@ $ cargo add encoders --features='potion-retrieval-32m, int8, mrl-256, rayon'
 
 ## Performance
 
-Encoders is fast. To give you an idea of just _how_ fast, here's encoders compared to a handful of other throughput-sensitive tasks (measured on an Apple M3 Pro CPU):
+Encoders is fast. To give you an idea of just _how_ fast, here's encoders with its default settings compared to a handful of other throughput-sensitive tasks (measured on an Apple M3 Pro CPU):
 
 ![Chart demonstrating the encoders' crate throughput to other tasks](https://raw.githubusercontent.com/flowercomputers/encoders/refs/heads/master/.github/throughput.png)
+
+If you're interested in learning how encoders is able to achieve this level of performance, check out the [methodology section](#methodology).
 
 ## Configuration and model selection
 
@@ -271,7 +273,21 @@ The idea behind encoders (and the crate that underpins it, [`ese`](./ese)) is si
 
 ![Chart comparing queries per second on encoders vs. other methods to embed text](https://raw.githubusercontent.com/flowercomputers/encoders/refs/heads/master/.github/qps.png)
 
-<!-- TODO: Some Specifics re: internal quantization method, accumulation, tokenization, unbounded input size etc -->
+**Tokenization.** [`ese`](./ese) reimplements the BERT normalizer, pre-tokenizer and WordPiece from Hugging Face's `tokenizers` crate as one streaming pass that never touches the heap. This is how we're able to exceed the throughput of just the tokenization step in most models. ASCII goes through a per-model byte table; every other character costs one lookup into precomputed Unicode tables (in the [`ese-unicode` crate](./ese-unicode)) for its class and normalized form. Building with the `tests` feature computes reference embeddings with the real `tokenizers` crate, and the test suite checks encoders' output against them.
+
+**Lookup.** The vocabulary is a two-level perfect hash generated at build time. The hash folds a key one byte at a time, so its state after each byte is already the hash of that prefix, and WordPiece hashes every candidate prefix of a word in a single pass instead of rehashing each one. A lookup is a bucket, a per-bucket seed, a slot, and a comparison against that slot's stored verifier, which rejects strings that aren't in the vocabulary. Rows are padded to whole 64-byte cache lines, and the verifier's low byte carries the row's scale exponent (see below), so one lookup yields everything needed to pool the token.
+
+**Quantization.** With `int16` (the default) or `int8`, every dimension gets its own minimum and scale, since columns of these models can differ in magnitude by several times. A handful of rows are much smaller than the rest: an untrained `[UNK]`, or frequent tokens down-weighted during distillation—those are scaled up by a power of two before quantizing so that they keep their resolution. Any row within 8x of the median (nearly all of them) is stored as-is.
+
+**Accumulation.** Rows aren't summed as tokens arrive. Their addresses are collected, up to 256 at a time, and then summed one 32-column block at a time in integer registers (8-bit rows in 16-bit lanes, 16-bit rows in 32-bit lanes, sized so 256 rows can't overflow). Each row byte is read exactly once and the running sum never round-trips through memory. The few scaled-up rows take a separate floating-point path. Dequantization, the mean, and optional normalization happen once at the end, written straight into the output, which `encode_single` returns by value on the stack.
+
+**Unbounded input.** When 256 rows are pending they're drained into a running sum and collection starts over, so there is no token limit: a three-word query and an entire book take the same code path, and every token of the book counts. This is a real difference from some other implementations. `model2vec-rs`, for example, truncates to 512 tokens by default, so very long inputs embed differently there.
+
+**Benchmarks.** The charts come from the [`bench`](./bench) crate (Criterion) and its Python companion in [`bench/py`](./bench/py). Every workload runs over questions from the [GooAQ](https://huggingface.co/datasets/sentence-transformers/gooaq) dataset, through each library's own API, on a single CPU thread. The exceptions are the bars labeled `rayon`, and tantivy, whose index writer starts its own worker threads. SHA-256 uses the `sha2` crate's portable implementation with hardware SHA instructions disabled. To regenerate both charts on your own machine:
+
+```console
+$ uv run --project bench/py bench/py/charts.py
+```
 
 The workspace has four crates. `encoders` is the one above. [`ese`](./ese) is the runtime: a byte-for-byte reimplementation of the BERT tokenizer pipeline, mean pooling in integer lanes, and a perfect-hash table over the vocabulary. [`ese-build`](./ese-build) runs in [`build.rs`](./build.rs): it fetches a model, works out how it is laid out and how it expects to be pooled from its own files, quantizes it, and writes the tables. [`ese-unicode`](./ese-unicode) is the 64 KB of Unicode tables the tokenizer needs, generated from pinned crates and checked in.
 

@@ -1,6 +1,8 @@
 use numpy::PyArrayMethods;
 use pyo3::prelude::*;
 
+/// Embed a string or a list of strings. Returns a float32 array of shape
+/// `(len(texts), DIMENSIONS)`; a single string gives one row.
 #[pyfunction]
 fn encode<'py>(py: Python<'py>, texts: Py<PyAny>) -> Bound<'py, numpy::PyArray2<f32>> {
     let texts: Vec<String> = if let Ok(s) = texts.extract::<String>(py) {
@@ -19,6 +21,7 @@ fn encode<'py>(py: Python<'py>, texts: Py<PyAny>) -> Bound<'py, numpy::PyArray2<
         .unwrap()
 }
 
+/// Width of every embedding `encode` returns.
 #[pyfunction]
 fn dimensions() -> usize {
     encoders::DIMENSIONS

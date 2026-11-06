@@ -1,9 +1,9 @@
 //! One throughput number (bytes per second of UTF-8 input) for `encoders` at
 //! its default settings next to a few familiar per-byte workloads, all over the
-//! same gooaq question set. Every sentence is processed individually, so
-//! per-call overhead is included for everything.
+//! same 65,536 gooaq questions, each driven the way its API expects.
 //!
-//! - `encoders`: `encode_into` with a reused output buffer.
+//! - `encoders`: `encode` over the whole slice. With `--features rayon` this
+//!   is recorded as `encoders-rayon` and the other workloads are skipped.
 //! - `tokenize`: the HuggingFace `tokenizers` crate running this model's own
 //!   `tokenizer.json`, ids only, no embedding lookup.
 //! - `sha256_soft`: `sha2` with `force-soft`, no SHA-NI / ARMv8 crypto.
@@ -12,8 +12,8 @@
 //!   measure deflate setup).
 //! - `tantivy_index`: building an in-RAM index over all the sentences, one
 //!   `TEXT` field, including the commit.
-//! - `json_decode`: `serde_json` parsing this model's `tokenizer.json` (a few
-//!   MB of vocab) into a `Value`. Throughput counts the file's bytes, not the
+//! - `json_decode`: `serde_json` parsing this model's `tokenizer.json` (about
+//!   2 MB for the default model) into a `Value`. Throughput counts the file's bytes, not the
 //!   sentences.
 
 use criterion::{Criterion, SamplingMode, Throughput, criterion_group, criterion_main};

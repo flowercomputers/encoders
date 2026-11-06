@@ -204,7 +204,7 @@ fn main() {
     } else {
         let b = Builder::hub(model.repo).revision(model.revision);
         if let Some(dir) = env::var_os("ESE_CACHE_DIR").filter(|d| !d.is_empty()) {
-            // we're in CI
+            // an explicit cache location, as CI sets to reuse downloads
             b.cache_dir(dir)
         } else {
             b
@@ -270,7 +270,7 @@ fn selected_model() -> (&'static ModelSpec, bool) {
         [m] => (m, false),
         many => panic!(
             "encoders: several models selected ({}). Cargo features are additive: \
-             depend on encoders with `default-features = false` and enable exactly one of {}.",
+             enable at most one of {}.",
             many.iter()
                 .map(|m| m.feature)
                 .collect::<Vec<_>>()
@@ -323,9 +323,8 @@ fn selected_dims(model: &ModelSpec) -> Option<usize> {
     Some(dims)
 }
 
-/// Storage: `int16` is the default feature and the fallback when nothing is
-/// set; `float32` or `int8` passed explicitly override it (so leaving the
-/// default features on and adding one of them works); `int8` and `float32`
+/// Storage: `int8` or `float32` when enabled, otherwise `int16`. The `int16`
+/// feature only states that choice explicitly; `int8` and `float32`
 /// together is a contradiction.
 fn selected_quant() -> Quant {
     match (feature_on("int8"), feature_on("float32")) {

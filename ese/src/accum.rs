@@ -2,13 +2,13 @@
 //!
 //! A quantized row carries a power-of-two exponent chosen at build time so
 //! that small-norm rows (an untrained `[UNK]`, SIF-down-weighted frequent
-//! tokens) still use the full 8 or 16 bits: the stored bytes represent
-//! `2^-exp * (min + q * scale)`.
+//! tokens) keep most of their 8 or 16 bits instead of collapsing to a few
+//! levels: the stored bytes represent `2^-exp * (min + q * scale)`.
 //!
 //! Rows are not summed as they arrive. Their addresses are collected and
 //! the sum runs afterwards one column block at a time with the integer
-//! lanes held in registers: each row byte is read once and the accumulator
-//! never touches memory. (Explicitly touching each row's cache lines at
+//! lanes held in registers: each row byte is read once and the integer sums
+//! never touch memory. (Explicitly touching each row's cache lines at
 //! lookup time was measured on real data and made no difference; the
 //! out-of-order core already overlaps those misses.) Rows with exponent 0,
 //! which is nearly all of them, go through that path; the few boosted rows
@@ -20,7 +20,8 @@ use core::mem::MaybeUninit;
 
 use crate::Elem;
 
-/// Largest row exponent ese-build emits.
+/// Largest row exponent the runtime accepts. ese-build's own limit must not
+/// exceed it; `include_model!` checks the generated tables at compile time.
 pub const MAX_ROW_EXP: usize = 8;
 
 /// Rows collected before a sum pass. Bounded so that integer lanes cannot

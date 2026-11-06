@@ -2,12 +2,15 @@
 //! each encoding the same batch of gooaq questions through its own API:
 //!
 //! - `encoders`: this crate at its default settings, `encode` over the batch.
+//!   With `--features rayon` this is recorded as `encoders-rayon` on every
+//!   core and the other two are skipped.
 //! - `model2vec-rs`: model2vec's default model (`minishlab/potion-base-8M`),
 //!   downloaded through hf-hub on first run.
 //! - `candle/all-MiniLM-L6-v2`: the usual small transformer baseline, run on
 //!   CPU with candle in f32, mean pooled and normalized like
 //!   sentence-transformers does. Weights are downloaded to `target/minilm`
-//!   on first run. Pinned to one thread so all three bars are single-core.
+//!   on first run. Outside the `rayon` build everything is pinned to one
+//!   thread, so all three bars are single-core.
 
 use criterion::{Criterion, SamplingMode, Throughput, criterion_group, criterion_main};
 use candle_core::{Device, Tensor};
