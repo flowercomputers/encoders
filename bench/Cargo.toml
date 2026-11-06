@@ -22,7 +22,7 @@ publish = false
 rayon = ["encoders/rayon"]
 
 [dev-dependencies]
-encoders = { path = "..", features=["int8", "mrl-256"] }
+encoders = { path = ".." }
 criterion = { version = "0", features = ["html_reports"] }
 model2vec-rs = "0"
 parquet = { version = "58" }
