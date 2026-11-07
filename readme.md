@@ -16,7 +16,7 @@
 The encoders crate is the **fastest way to semantically embed text** on CPU.[^1] We take [a collection of state-of-the-art](#configuration-and-model-selection) static embedding models, and compile them directly into Rust code. That means no downloading models at runtime, no GPU, no inference runtime, no Python... just nanosecond scale text embedding.
 
 - [encoders on GitHub](https://github.com/flowercomputers/encoders)
-- [encoders on docs.rs](https://docs.rs/crate/encoders/latest)
+- [encoders on docs.rs](https://docs.rs/encoders/latest/encoders/)
 - [encoders on crates.io](https://crates.io/crates/encoders)
 - [_Read our article all about it here!_](https://flowercomputer.com/posts/even-faster-static-embedding/)
 
@@ -36,13 +36,10 @@ $ cargo add encoders
 $ cargo add encoders --features='potion-retrieval-32m, int8, mrl-256, rayon'
 ```
 
-## Performance
-
-Encoders is fast. To give you an idea of just _how_ fast, here's encoders with its default settings compared to a handful of other throughput-sensitive tasks (measured on an Apple M3 Pro CPU):
+Encoders is fast. To give you an idea of just _how_ fast, here's encoders with its default settings compared to a handful of other throughput-sensitive tasks (measured on an Apple M3 Pro CPU). If you're interested in learning how encoders is able to achieve this level of performance, check out the [methodology section](#methodology).
 
 ![Chart demonstrating the encoders' crate throughput to other tasks](https://raw.githubusercontent.com/flowercomputers/encoders/refs/heads/master/.github/throughput.png)
 
-If you're interested in learning how encoders is able to achieve this level of performance, check out the [methodology section](#methodology).
 
 ## Configuration and model selection
 
@@ -299,7 +296,18 @@ $ uv run --project bench/py bench/py/charts.py
 
 **Binary size and compile time.** The model's lookup table is embedded in your executable, so this can add a few MB (for a small model at a narrow width) up to a few hundred MB for a model large vocabulary at full width in f32. That said, any model needs its weights at runtime somehow; this crate just puts them in the binary rather than downloading/loading them at runtime. The first build of a model downloads it from the Hugging Face hub (into `target/ese-cache`, so it's cleaned up by `cargo clean`) and the final link of a large table takes a while. You also _really, really need to compile this with optimizations on_... give LLVM a chance to autovectorize!
 
-## Licensing
+-----
+
+<h3>Flower Computer&nbsp;&nbsp;<img src="https://www.flowercomputer.com/favicon.svg" height="18px" /> </h3>
+
+Encoders is brought to you by the folks at [Flower Computer](https://flowercomputer.com). If you like encoders, you'll definitely like some of [our other work](https://github.com/flowercomputers) too! Keep up with what we're doing in these places:
+
+- [Our blog!](https://flowercomputer.com/news)
+- [@flowercomputers](https://github.com/flowercomputers) on GitHub
+- [@flowercomputers](https://x.com/flowercomputers) on Twitter
+
+
+### Licensing
 
 The code in this repo is licensed Apache-2.0. However, you must respect each model's license; model licenses are available at build time in the summary and at run time as `encoders::model::LICENSE`.
 
