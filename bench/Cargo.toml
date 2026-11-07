@@ -1,11 +1,13 @@
 # Benchmarks for encoders. A separate, unpublished package so the heavy
-# comparison crates (candle, tantivy, model2vec-rs, ...) stay out of encoders'
+# comparison crates (tantivy, model2vec-rs, ...) stay out of encoders'
 # own dev-dependencies.
 #
 #   cargo bench -p encoders-bench --bench throughput
-#   cargo bench -p encoders-bench --bench embedders
+#   cargo bench -p encoders-bench --bench queries --features potion-base-8m
+#   cargo bench -p encoders-bench --bench corpus --features potion-base-8m
 #
-# Add `--features rayon` to record the parallel encoders bar as well.
+# Add `rayon` to the features to record the parallel encoders bar of
+# `throughput` and `corpus`.
 # `py/` holds the sentence-transformers side (py/qps.py) and the script that
 # runs everything and renders the readme charts (py/charts.py).
 
@@ -20,6 +22,10 @@ publish = false
 # parallel). The comparison bars are skipped in this build; run it after the
 # default one and both ids land in criterion's results.
 rayon = ["encoders/rayon"]
+# Compile encoders with model2vec-rs's default model, unquantized, so the
+# `queries` and `corpus` benches compare the two crates on the same weights.
+# Both benches refuse to run without it.
+potion-base-8m = ["encoders/potion-base-8m", "encoders/float32"]
 
 [dev-dependencies]
 encoders = { path = ".." }
@@ -27,20 +33,19 @@ criterion = { version = "0", features = ["html_reports"] }
 model2vec-rs = "0"
 parquet = { version = "58" }
 minreq = { version = "2", features = ["https-native"] }
-sha2 = { version = "0.10", features = ["force-soft"] }
-flate2 = "1.1.11"
-tokenizers = { version = "0.23.2", default-features = false, features = ["onig"] }
-tantivy = "0.27.0"
-serde_json = "1.0.154"
-candle-core = "0.11.1"
-candle-nn = "0.11.1"
-candle-transformers = "0.11.1"
-rayon = "1"
+sha2 = { version = "0", features = ["force-soft"] }
+flate2 = "1"
+tokenizers = { version = "0", default-features = false, features = ["onig"] }
+tantivy = "0"
 
 [[bench]]
 name = "throughput"
 harness = false
 
 [[bench]]
-name = "embedders"
+name = "corpus"
+harness = false
+
+[[bench]]
+name = "queries"
 harness = false

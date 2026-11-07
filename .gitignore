@@ -2,3 +2,5 @@
 /bench_out
 **/**.tar**
 /.ese-models
+.cargo
+corpus.json

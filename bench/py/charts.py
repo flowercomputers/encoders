@@ -1,14 +1,15 @@
-"""Run the three benchmarks and render the readme charts in the Flower Computer style.
+"""Run the benchmarks and render the readme charts in the Flower Computer style.
 
     uv run charts.py              # bench + render
     uv run charts.py --no-bench   # re-render from the last run
     uv run charts.py --no-rust    # only the python QPS bench, then render
 
 Writes `.github/throughput.png` (bytes/s over gooaq text, log scale) and
-`.github/qps.png` (sentences/s for the embedding libraries). Rust numbers are
-read from criterion's `target/criterion/<group>/.../new/estimates.json`; the
-python QPS numbers are measured by `qps.measure` and cached in
-`benchmarks/qps.json`.
+`.github/qps.png` (queries/s, one query per call) and `.github/corpus.png`
+(documents/s, one batch of answers). Rust numbers are read from criterion's
+`target/criterion/<group>/.../new/estimates.json`; the python numbers are
+measured by `qps.measure_queries` / `qps.measure_corpus` and cached in
+`benchmarks/qps.json` / `benchmarks/corpus.json`.
 """
 
 import json
@@ -30,6 +31,7 @@ ROOT = HERE.parents[1]
 CRITERION = ROOT / "target" / "criterion"
 OUT = ROOT / ".github"
 QPS_CACHE = HERE / "benchmarks" / "qps.json"
+CORPUS_CACHE = HERE / "benchmarks" / "corpus.json"
 
 # criterion ids / model names -> label on the chart. Only ids listed here are
 # charted (criterion keeps results of benches that no longer exist); bars are
@@ -38,19 +40,20 @@ THROUGHPUT_LABELS = {
     "encoders": "encoders",
     "encoders-rayon": "encoders\n(rayon)",
     "tokenize": "HF tokenizers\nWordPiece only",
-    "sha256_soft": "SHA-256\nno hw accel",
-    "gzip": "gzip\nflate2 default",
+    "sha256_soft": "SHA-256\nsoftware backend",
+    "gzip": "gzip\nflate2",
     "tantivy_index": "tantivy index\nin-memory",
-    "json_decode": "JSON decode\nserde_json crate",
 }
-QPS_LABELS = {
-    "encoders": "encoders",
-    "encoders-rayon": "encoders\n(rayon)",
+# encoders is built with model2vec-rs's model (potion-base-8M, float32) here.
+CORPUS_LABELS = {
+    "encoders": "encoders\npotion-base-8M",
+    "encoders-rayon": "encoders (rayon)\npotion-base-8M",
     "model2vec-rs": "model2vec-rs\npotion-base-8M",
-    "candle/all-MiniLM-L6-v2": "candle\nall-MiniLM-L6-v2",
     "minishlab/potion-base-8M": "python\npotion-base-8M",
     "sentence-transformers/all-MiniLM-L6-v2": "python\nall-MiniLM-L6-v2",
 }
+# Single-text calls never go parallel, so there is no rayon bar here.
+QPS_LABELS = {k: v for k, v in CORPUS_LABELS.items() if k != "encoders-rayon"}
 PY_MODELS = ["minishlab/potion-base-8M", "sentence-transformers/all-MiniLM-L6-v2"]
 HIGHLIGHT = {"encoders", "encoders-rayon"}
 # Every bar other than `HIGHLIGHT` is re-cut in OKLCH: chroma scaled by
@@ -116,24 +119,35 @@ def bar_colors(keys: list[str], labels: dict[str, str], t) -> list[str]:
 
 
 def run_rust_benches():
-    # Each bench twice: the default build, then `--features rayon`, which
-    # records only the parallel encoders bar under a second id.
-    for bench in ("throughput", "embedders"):
-        for extra in ([], ["--features", "rayon"]):
-            subprocess.run(
-                ["cargo", "bench", "-p", "encoders-bench", "--bench", bench, *extra],
-                cwd=ROOT,
-                check=True,
-            )
+    # `throughput` measures encoders at its defaults; `queries` and `corpus`
+    # build it with model2vec-rs's model. A `rayon` build records only the
+    # parallel encoders bar under a second id, so `queries` (single-text calls,
+    # never parallel) skips it.
+    runs = [
+        ("throughput", ""),
+        ("throughput", "rayon"),
+        ("queries", "potion-base-8m"),
+        ("corpus", "potion-base-8m"),
+        ("corpus", "potion-base-8m,rayon"),
+    ]
+    for bench, features in runs:
+        extra = ["--features", features] if features else []
+        subprocess.run(
+            ["cargo", "bench", "-p", "encoders-bench", "--bench", bench, *extra],
+            cwd=ROOT,
+            check=True,
+        )
 
 
-def run_python_bench() -> dict[str, float]:
-    from qps import measure
-
+def run_python_bench(measure, cache: Path) -> dict[str, float]:
     qps = measure(PY_MODELS)
-    QPS_CACHE.parent.mkdir(exist_ok=True)
-    QPS_CACHE.write_text(json.dumps(qps, indent=2))
+    cache.parent.mkdir(exist_ok=True)
+    cache.write_text(json.dumps(qps, indent=2))
     return qps
+
+
+def cached(cache: Path) -> dict[str, float]:
+    return json.loads(cache.read_text()) if cache.exists() else {}
 
 
 def criterion_results(group: str) -> dict[str, float]:
@@ -266,30 +280,43 @@ def main():
     if bench:
         if "--no-rust" not in sys.argv:
             run_rust_benches()
-        qps_py = run_python_bench()
+        from qps import measure_corpus, measure_queries
+
+        qps_py = run_python_bench(measure_queries, QPS_CACHE)
+        corpus_py = run_python_bench(measure_corpus, CORPUS_CACHE)
     else:
-        qps_py = json.loads(QPS_CACHE.read_text()) if QPS_CACHE.exists() else {}
+        qps_py = cached(QPS_CACHE)
+        corpus_py = cached(CORPUS_CACHE)
 
     throughput = criterion_results("throughput")
     bars(
         throughput,
         THROUGHPUT_LABELS,
-        "Throughput (GooAQ corpus)",
+        "Throughput",
         "bytes per second, log scale",
         OUT / "throughput.png",
         log=True,
         unit="B/s",
     )
 
-    qps = criterion_results("embedders") | qps_py
     bars(
-        qps,
+        criterion_results("queries") | qps_py,
         QPS_LABELS,
-        "Queries embedded per second (GooAQ)",
+        "Queries per second, unbatched",
         "queries per second",
         OUT / "qps.png",
         log=False,
         unit="qps",
+    )
+
+    bars(
+        criterion_results("corpus") | corpus_py,
+        CORPUS_LABELS,
+        "Documents per second, batched",
+        "documents per second",
+        OUT / "corpus.png",
+        log=False,
+        unit="dps",
     )
 
 

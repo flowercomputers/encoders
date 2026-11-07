@@ -40,7 +40,6 @@ Encoders is fast. To give you an idea of just _how_ fast, here's encoders with i
 
 ![Chart demonstrating the encoders' crate throughput to other tasks](https://raw.githubusercontent.com/flowercomputers/encoders/refs/heads/master/.github/throughput.png)
 
-
 ## Configuration and model selection
 
 > [!WARNING]
@@ -270,7 +269,13 @@ Otherwise, check out the [`ese-build`](./ese-build) and [`ese`](./ese) crates, w
 
 The idea behind encoders (and the crate that underpins it, [`ese`](./ese)) is simple: static embedding models are essentially lookup tables from token IDs to weights. Why not just resolve the tokens to their weights with a compile-time map? So, that's exactly what it does—with a lot of other performance-oriented tricks to boot!
 
-![Chart comparing queries per second on encoders vs. other methods to embed text](https://raw.githubusercontent.com/flowercomputers/encoders/refs/heads/master/.github/qps.png)
+The following chart shows unbatched throughput on the query half of the GooAQ dataset, approximating query-side search workloads:
+
+![Chart comparing queries per second, one query per call, on encoders vs. other methods to embed text](https://raw.githubusercontent.com/flowercomputers/encoders/refs/heads/master/.github/qps.png)
+
+The following chart shows unbatched throughput on documents (generally pretty long inputs) in the GooAQ dataset, approximating index-side workloads:
+
+![Chart comparing documents per second, embedded in batches, on encoders vs. other methods to embed text](https://raw.githubusercontent.com/flowercomputers/encoders/refs/heads/master/.github/corpus.png)
 
 **Build time.** [`ese-build`](./ese-build) downloads the model, reads how it expects text to be tokenized and pooled from the model's own files, quantizes the weights, and writes them out as a perfect-hash table keyed by vocabulary entry. That table is compiled into your binary, so there is nothing to load or initialize at runtime.
 
@@ -282,21 +287,21 @@ The idea behind encoders (and the crate that underpins it, [`ese`](./ese)) is si
 
 **Pooling.** Token weights are summed in integer registers, so each byte of the table is read once, and converted back to floating point once at the end. Sums drain into a running total every few hundred tokens, so there's no input length limit: a whole book embeds the same way a query does, and every token counts. You shouldn't embed a whole book, though... these are sentence level models!
 
-### Benchmarking
-
-The charts come from the [`bench`](./bench) crate (Criterion) and its Python companion in [`bench/py`](./bench/py). Every workload runs over questions from the [GooAQ](https://huggingface.co/datasets/sentence-transformers/gooaq) dataset. To regenerate both charts on your own machine:
-
-```console
-$ uv run --project bench/py bench/py/charts.py
-```
-
 ### Caveats emptor
 
 **Embedding quality.** Encoders only works with static embedding models: each token has one fixed vector and a text is the mean of its tokens' vectors. There is no attention, so word order and context are invisible, and quality is a step below even small transformer encoders. On retrieval benchmarks the gap is real but not enormous; the bekko family scores about 49 to 54 on NanoBEIR against the low 60s for a small transformer. In exchange, embedding text runs in the order of nanoseconds instead of milliseconds. For a lot of (if not most) search, dedup, clustering, and routing work, that seems like the right trade (and we hope the speed makes up for the rest).
 
 **Binary size and compile time.** The model's lookup table is embedded in your executable, so this can add a few MB (for a small model at a narrow width) up to a few hundred MB for a model large vocabulary at full width in f32. That said, any model needs its weights at runtime somehow; this crate just puts them in the binary rather than downloading/loading them at runtime. The first build of a model downloads it from the Hugging Face hub (into `target/ese-cache`, so it's cleaned up by `cargo clean`) and the final link of a large table takes a while. You also _really, really need to compile this with optimizations on_... give LLVM a chance to autovectorize!
 
------
+### Benchmarks
+
+The charts come from the [`bench`](./bench) crate (Criterion) and its Python companion, [`bench/py`](./bench/py). The benchmark workloads run over questions taken from the [GooAQ](https://huggingface.co/datasets/sentence-transformers/gooaq) dataset. To regenerate charts featured in this repo on your own machine:
+
+```console
+$ uv run --project bench/py bench/py/charts.py
+```
+
+---
 
 <h3>Flower Computer&nbsp;&nbsp;<img src="https://www.flowercomputer.com/favicon.svg" height="18px" /> </h3>
 
@@ -305,7 +310,6 @@ Encoders is brought to you by the folks at [Flower Computer](https://flowercompu
 - [Our blog!](https://flowercomputer.com/news)
 - [@flowercomputers](https://github.com/flowercomputers) on GitHub
 - [@flowercomputers](https://x.com/flowercomputers) on Twitter
-
 
 ### Licensing
 

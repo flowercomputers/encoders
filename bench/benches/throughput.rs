@@ -12,9 +12,6 @@
 //!   measure deflate setup).
 //! - `tantivy_index`: building an in-RAM index over all the sentences, one
 //!   `TEXT` field, including the commit.
-//! - `json_decode`: `serde_json` parsing this model's `tokenizer.json` (about
-//!   2 MB for the default model) into a `Value`. Throughput counts the file's bytes, not the
-//!   sentences.
 
 use criterion::{Criterion, SamplingMode, Throughput, criterion_group, criterion_main};
 use flate2::{Compression, write::GzEncoder};
@@ -34,7 +31,9 @@ const ENCODERS_ID: &str = if cfg!(feature = "rayon") {
 } else {
     "encoders"
 };
-use common::{load_sentences, target_dir};
+use common::target_dir;
+
+use crate::common::load_answers;
 
 /// The `tokenizer.json` ese-build downloaded for the compiled model. It sits
 /// at the cache root or, for sentence-transformers layouts, one folder down.
@@ -57,7 +56,7 @@ fn tokenizer_path() -> PathBuf {
 }
 
 fn bench_throughput(c: &mut Criterion) {
-    let sentences = &load_sentences()[..65536];
+    let sentences = &load_answers()[..65536];
     let bytes: u64 = sentences.iter().map(|s| s.len() as u64).sum();
     eprintln!(
         "throughput: {} sentences, {bytes} bytes, mean {:.1} bytes/sentence",
@@ -136,12 +135,6 @@ fn bench_throughput(c: &mut Criterion) {
             b.iter(|| black_box(build_index()));
         });
     }
-
-    let json = std::fs::read_to_string(tokenizer_path()).unwrap();
-    group.throughput(Throughput::Bytes(json.len() as u64));
-    group.bench_function("json_decode", |b| {
-        b.iter(|| black_box(serde_json::from_str::<serde_json::Value>(black_box(&json)).unwrap()));
-    });
 
     group.finish();
 }
