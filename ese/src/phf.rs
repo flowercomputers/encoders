@@ -147,8 +147,16 @@ pub const fn bucket(h: u64, num_buckets: usize) -> usize {
     ((h as u128 * num_buckets as u128) >> 64) as usize
 }
 
-/// The seeded hash of a folded key. Its low bits pick the slot; the whole
-/// value is the verifier. Seeds are 16 bits, so the seed table costs two
+/// Slot of a seeded hash in a table of `table_size` slots: the high bits of
+/// a 64x64 multiply, so the table can be any size and is sized to the
+/// vocabulary rather than rounded up to a power of two.
+#[inline(always)]
+pub const fn slot(x: u64, table_size: usize) -> usize {
+    ((x as u128 * table_size as u128) >> 64) as usize
+}
+
+/// The seeded hash of a folded key. [`slot`] maps it into the table; the
+/// whole value is the verifier. Seeds are 16 bits, so the seed table costs two
 /// bytes per vocabulary entry (about 200 KB for a 100k vocabulary).
 ///
 /// The seed is mixed into the fully folded key, and the mix is a bijection,

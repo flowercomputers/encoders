@@ -455,7 +455,7 @@ pub struct Summary {
     /// Width of the generated embeddings.
     pub dims: usize,
     pub quant: Quant,
-    /// Slots in the perfect-hash table, a power of two at least `vocab_size`.
+    /// Slots in the perfect-hash table, about 1% more than `vocab_size`.
     pub table_size: usize,
     /// Unknown tokens are dropped before pooling (model2vec semantics).
     pub drop_unk: bool,

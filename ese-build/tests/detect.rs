@@ -113,7 +113,7 @@ fn sentence_transformers_layout() {
     assert!(!s.drop_unk && !s.normalize);
     assert_eq!(
         (s.dims, s.native_dims, s.vocab_size, s.table_size),
-        (4, 4, 9, 16)
+        (4, 4, 9, 10)
     );
     let c = constants(&d.out());
     assert!(c.contains("pub const DROP_UNK: bool = false;"));
@@ -127,11 +127,11 @@ fn sentence_transformers_layout() {
     assert!(c.contains("pub const ROW_STRIDE: usize = 64;"));
     assert_eq!(
         fs::metadata(d.out().join("weights.bin")).unwrap().len(),
-        16 * 64
+        10 * 64
     );
     assert_eq!(
         fs::metadata(d.out().join("verify.bin")).unwrap().len(),
-        16 * 8
+        10 * 8
     );
 }
 
@@ -174,7 +174,7 @@ fn model2vec_layout_with_normalize_and_vocab_quantization() {
     assert!(c.contains("pub const ROW_STRIDE: usize = 64;"));
     assert_eq!(
         fs::metadata(d.out().join("weights.bin")).unwrap().len(),
-        16 * 64
+        10 * 64
     );
 }
 
@@ -287,7 +287,7 @@ fn small_rows_get_exponents() {
     // The row exponent is the low byte of each slot's verifier.
     let verify = fs::read(d.out().join("verify.bin")).unwrap();
     let exps: Vec<u8> = verify.as_chunks::<8>().0.iter().map(|v| v[0]).collect();
-    assert_eq!(exps.len(), 16);
+    assert_eq!(exps.len(), 10);
     let c = constants(&d.out());
     assert!(c.contains("pub const UNK_EXP: u8 = 8;"), "{c}");
     assert!(c.contains("pub const ROW_EXP_MAX: u8 = 8;"));

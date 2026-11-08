@@ -73,7 +73,7 @@ rayon = ["ese/rayon"]
 tests = ["ese-build/test-data"]
 
 [dependencies]
-ese = { version = "0.2.0", path = "ese" }
+ese = { version = "0.3.0", path = "ese" }
 
 [build-dependencies]
-ese-build = { version = "0.2.0", path = "ese-build" }
+ese-build = { version = "0.3.0", path = "ese-build" }

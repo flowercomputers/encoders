@@ -353,12 +353,12 @@ macro_rules! include_model {
             #[inline(always)]
             pub fn lookup_hash(h: u64) -> Option<(&'static Param, u8)> {
                 let bucket = $crate::phf::bucket(h, NUM_BUCKETS);
-                // SAFETY: bucket < NUM_BUCKETS by construction and the slot is
-                // masked into TABLE_SIZE, which is a power of two.
+                // SAFETY: bucket < NUM_BUCKETS and slot < TABLE_SIZE by
+                // construction (both are multiply-high range reductions).
                 unsafe {
                     let seed = *SEEDS.get_unchecked(bucket);
                     let x = $crate::phf::seeded(h, seed);
-                    let slot = (x as usize) & TABLE_MASK;
+                    let slot = $crate::phf::slot(x, TABLE_SIZE);
                     let v = *VERIFY.get_unchecked(slot);
                     if $crate::phf::verifies(v, x) {
                         Some((&SLOTS.get_unchecked(slot).weight, v as u8))

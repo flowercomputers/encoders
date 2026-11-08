@@ -1,14 +1,15 @@
 //! Two-level perfect hash construction over the runtime's own hash
 //! functions (`ese::phf`), so the two sides cannot drift.
 //!
-//! `bucket(hash_key(key))` picks a bucket, and `seeded(hash_key(key),
-//! seeds[bucket])` masked to the table picks the slot. The full seeded value
-//! is the slot's verifier (the emitter packs the row exponent into its low
-//! byte).
+//! `bucket(hash_key(key))` picks a bucket, and `slot(seeded(hash_key(key),
+//! seeds[bucket]), table_size)` picks the slot. The full seeded value is the
+//! slot's verifier (the emitter packs the row exponent into its low byte).
+//! The table is sized to about 99% occupancy rather than a power of two, so
+//! the embedded rows are barely larger than the vocabulary.
 
 use std::collections::HashSet;
 
-use ese::phf::{bucket, hash_key, seeded};
+use ese::phf::{bucket, hash_key, seeded, slot};
 
 use crate::Error;
 
@@ -26,6 +27,9 @@ pub(crate) struct Phf {
     pub verify: Vec<u64>,
 }
 
+/// Target fraction of occupied slots.
+const LOAD: f64 = 0.99;
+
 pub(crate) fn build(keys: &[&[u8]]) -> Result<Phf, Error> {
     let n = keys.len();
     if n == 0 {
@@ -33,11 +37,14 @@ pub(crate) fn build(keys: &[&[u8]]) -> Result<Phf, Error> {
             "cannot build a hash table for an empty vocabulary".into(),
         ));
     }
-    let mut table_size = n.next_power_of_two();
+    // Fill the table to about LOAD; the last keys placed then find a free
+    // slot within ~1/(1 - LOAD) seeds, well inside the 16-bit seed range.
+    // A failed attempt grows the table by a further 1%.
+    let mut table_size = ((n as f64 / LOAD).ceil() as usize).max(n);
     loop {
         match build_sized(keys, table_size)? {
             Some(phf) => return Ok(phf),
-            None if table_size < (1 << 40) => table_size *= 2,
+            None if table_size < (1 << 40) => table_size += table_size.div_ceil(100),
             None => {
                 return Err(Error::Invalid(
                     "perfect hash construction failed at every table size".into(),
@@ -51,7 +58,6 @@ pub(crate) fn build(keys: &[&[u8]]) -> Result<Phf, Error> {
 /// `u16::MAX` at this table size.
 fn build_sized(keys: &[&[u8]], table_size: usize) -> Result<Option<Phf>, Error> {
     let n = keys.len();
-    let table_mask = table_size - 1;
     let num_buckets = n;
 
     let hashes: Vec<u64> = keys.iter().map(|k| hash_key(k)).collect();
@@ -82,7 +88,7 @@ fn build_sized(keys: &[&[u8]], table_size: usize) -> Result<Option<Phf>, Error> 
             trial.clear();
             seen.clear();
             let ok = buckets[b].iter().all(|&k| {
-                let slot = (seeded(hashes[k], seed as u16) as usize) & table_mask;
+                let slot = slot(seeded(hashes[k], seed as u16), table_size);
                 if slots[slot].is_some() || !seen.insert(slot) {
                     return false;
                 }
@@ -118,7 +124,7 @@ mod tests {
     fn lookup(p: &Phf, key: &[u8]) -> Option<usize> {
         let h = hash_key(key);
         let x = seeded(h, p.seeds[bucket(h, p.num_buckets)]);
-        let slot = (x as usize) & (p.table_size - 1);
+        let slot = slot(x, p.table_size);
         (p.verify[slot] == x).then_some(p.slots[slot]).flatten()
     }
 

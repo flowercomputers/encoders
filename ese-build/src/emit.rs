@@ -127,7 +127,6 @@ pub const VOCAB_SIZE: usize = {vocab_size};
 pub type Elem = {elem};
 pub type Param = [Elem; DIMENSIONS];
 pub const TABLE_SIZE: usize = {table_size};
-pub const TABLE_MASK: usize = {table_mask};
 pub const NUM_BUCKETS: usize = {num_buckets};
 pub const ROW_STRIDE: usize = {row_stride};
 /// Largest per-row exponent packed into `verify.bin`.
@@ -165,7 +164,6 @@ pub const SPECIAL_TOKENS: &[&str] = &{specials:?};
         vocab_size = spec.vocab.len(),
         elem = e.quant.elem_name(),
         table_size = phf.table_size,
-        table_mask = phf.table_size - 1,
         num_buckets = phf.num_buckets,
         unk_token = spec.unk_token,
         drop_unk = e.layout.drop_unk,
