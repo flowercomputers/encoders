@@ -1,21 +1,26 @@
-//! One throughput number (bytes per second of UTF-8 input) for `encoders` at
-//! its default settings next to a few familiar per-byte workloads, all over the
-//! same 65,536 gooaq questions, each driven the way its API expects.
+//! Throughput (bytes per second of UTF-8 input) of `encoders` next to a few
+//! familiar per-byte workloads over the same 65,536 gooaq answers `corpus`
+//! embeds, each driven the way its API expects. This bench records nothing in
+//! the `rayon` build; the chart's parallel encoders bar is `corpus`'s
+//! `encoders-rayon`, measured over that same batch.
 //!
-//! - `encoders`: `encode` over the whole slice. With `--features rayon` this
-//!   is recorded as `encoders-rayon` and the other workloads are skipped.
+//! - `encoders`: `encode` over the whole slice on one thread.
 //! - `tokenize`: the HuggingFace `tokenizers` crate running this model's own
 //!   `tokenizer.json`, ids only, no embedding lookup.
-//! - `sha256_soft`: `sha2` with `force-soft`, no SHA-NI / ARMv8 crypto.
+//! - `sha256`: `sha2` with whatever hardware backend the CPU offers (SHA-NI,
+//!   ARMv8 crypto extensions).
+//! - `sha256_soft`: `sha2` 0.10 with `force-soft`, portable code only.
 //! - `gzip`: `flate2` at the default level, sentences streamed newline-separated
 //!   through one encoder into a sink (one gzip member per sentence would mostly
 //!   measure deflate setup).
 //! - `tantivy_index`: building an in-RAM index over all the sentences, one
-//!   `TEXT` field, including the commit.
+//!   `TEXT` field, including the commit. tantivy's writer indexes on
+//!   several threads.
 
 use criterion::{Criterion, SamplingMode, Throughput, criterion_group, criterion_main};
 use flate2::{Compression, write::GzEncoder};
 use sha2::{Digest, Sha256};
+use sha2_soft::Digest as _;
 use std::hint::black_box;
 use std::io::Write;
 use std::path::PathBuf;
@@ -25,15 +30,7 @@ use tantivy::{Index, doc};
 
 mod common;
 
-/// Criterion id of the encoders bar; `--features rayon` records a second one.
-const ENCODERS_ID: &str = if cfg!(feature = "rayon") {
-    "encoders-rayon"
-} else {
-    "encoders"
-};
-use common::target_dir;
-
-use crate::common::load_answers;
+use common::{load_answers, target_dir};
 
 /// The `tokenizer.json` ese-build downloaded for the compiled model. It sits
 /// at the cache root or, for sentence-transformers layouts, one folder down.
@@ -56,6 +53,10 @@ fn tokenizer_path() -> PathBuf {
 }
 
 fn bench_throughput(c: &mut Criterion) {
+    if cfg!(feature = "rayon") {
+        // Nothing here depends on encoders' rayon feature.
+        return;
+    }
     let sentences = &load_answers()[..65536];
     let bytes: u64 = sentences.iter().map(|s| s.len() as u64).sum();
     eprintln!(
@@ -74,16 +75,9 @@ fn bench_throughput(c: &mut Criterion) {
     group.sample_size(10);
     group.sampling_mode(SamplingMode::Flat);
 
-    group.bench_function(ENCODERS_ID, |b| {
-        b.iter(|| {
-            let _ = black_box(encoders::encode(sentences));
-        });
+    group.bench_function("encoders", |b| {
+        b.iter(|| black_box(encoders::encode(black_box(sentences))));
     });
-    if cfg!(feature = "rayon") {
-        // Only the encoders bar differs between builds.
-        group.finish();
-        return;
-    }
 
     {
         let tokenizer = tokenizers::Tokenizer::from_file(tokenizer_path())
@@ -102,6 +96,14 @@ fn bench_throughput(c: &mut Criterion) {
         b.iter(|| {
             for s in sentences {
                 black_box(Sha256::digest(black_box(s).as_bytes()));
+            }
+        });
+    });
+
+    group.bench_function("sha256_soft", |b| {
+        b.iter(|| {
+            for s in sentences {
+                black_box(sha2_soft::Sha256::digest(black_box(s).as_bytes()));
             }
         });
     });

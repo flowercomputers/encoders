@@ -4,7 +4,9 @@
     uv run charts.py --no-bench   # re-render from the last run
     uv run charts.py --no-rust    # only the python QPS bench, then render
 
-Writes `.github/throughput.png` (bytes/s over gooaq text),
+Writes `.github/throughput.png` (bytes/s over gooaq answers, log scale; the
+parallel encoders bar is the `corpus` group's, measured once over the same
+batch),
 `.github/qps.png` (gooaq questions, one per call) and `.github/corpus.png`
 (gooaq answers, one batch). The last two lead with bytes/s and show an
 approximate queries/s or documents/s beneath each value: bytes/s divided by
@@ -13,7 +15,8 @@ criterion's `target/criterion/<group>/.../new/estimates.json`, with the text
 count and size the bench recorded in `target/criterion/<group>/texts.json`;
 the python numbers are measured by `qps.measure_queries` /
 `qps.measure_corpus` and cached in `benchmarks/qps.json` /
-`benchmarks/corpus.json`.
+`benchmarks/corpus.json`. Bars that run on more than one thread wear an
+asterisk, explained under the chart.
 """
 
 import json
@@ -44,22 +47,33 @@ THROUGHPUT_LABELS = {
     "encoders": "encoders",
     "encoders-rayon": "encoders\n(rayon)",
     "tokenize": "HF tokenizers\nWordPiece only",
-    "sha256_soft": "SHA-256\nsha2 crate",
+    "sha256": "SHA-256\nhardware accel.",
+    "sha256_soft": "SHA-256\nsoftware backend",
     "gzip": "gzip\nflate2 crate",
     "tantivy_index": "tantivy index\nin-memory",
 }
 # encoders is built with model2vec-rs's model (potion-base-8M, float32) here.
-CORPUS_LABELS = {
-    "encoders": "encoders\n",
-    "encoders-rayon": "encoders\n(rayon)",
+# The batched chart shows only the parallel encoders bar; single-text calls
+# never go parallel, so the unbatched one shows only the single-threaded bar.
+_COMPARED = {
     "model2vec-rs": "model2vec-rs\npotion-base-8M",
     "minishlab/potion-base-8M": "python\npotion-base-8M",
     "sentence-transformers/all-MiniLM-L6-v2": "python\nall-MiniLM-L6-v2",
 }
-# Single-text calls never go parallel, so there is no rayon bar here.
-QPS_LABELS = {k: v for k, v in CORPUS_LABELS.items() if k != "encoders-rayon"}
+CORPUS_LABELS = {"encoders-rayon": "encoders\n(rayon)", **_COMPARED}
+QPS_LABELS = {"encoders": "encoders\n", **_COMPARED}
 PY_MODELS = ["minishlab/potion-base-8M", "sentence-transformers/all-MiniLM-L6-v2"]
 HIGHLIGHT = {"encoders", "encoders-rayon"}
+# Bars that run on more than one thread, per chart. tantivy's index writer
+# spawns several indexing threads; model2vec-rs batches through a rayon
+# parallel iterator; the python batches go through a Hugging Face tokenizer
+# that spreads them across every core. Unbatched queries are single-threaded
+# everywhere.
+THROUGHPUT_MULTI = {"encoders-rayon", "tantivy_index"}
+CORPUS_MULTI = {"encoders-rayon", "model2vec-rs", *PY_MODELS}
+MULTI_NOTE = "* multithreaded"
+# The throughput chart's parallel encoders bar, borrowed from this group.
+ENCODERS_GROUP = "corpus"
 # Every bar other than `HIGHLIGHT` is re-cut in OKLCH: chroma scaled by
 # OTHER_SATURATION (0 = gray, 1 = the palette's own chroma) and lightness
 # pinned to OTHER_LIGHTNESS (0..1, perceptual) so dark slots such as green
@@ -123,21 +137,13 @@ def bar_colors(keys: list[str], labels: dict[str, str], t) -> list[str]:
 
 
 def run_rust_benches():
-    # `throughput` measures encoders at its defaults; `queries` and `corpus`
-    # build it with model2vec-rs's model. A `rayon` build records only the
-    # parallel encoders bar under a second id, so `queries` (single-text calls,
-    # never parallel) skips it.
-    runs = [
-        ("throughput", ""),
-        ("throughput", "rayon"),
-        ("queries", ""),
-        ("corpus", ""),
-        ("corpus", "rayon"),
-    ]
-    for bench, features in runs:
-        extra = ["--features", features] if features else []
+    # Every bench once in the default build, then the rayon build for the one
+    # bar it adds: the parallel encoders bar of `corpus`, recorded under a
+    # second id. `throughput` and `queries` have nothing parallel to add.
+    runs = [[], ["--bench", "corpus", "--features", "rayon"]]
+    for extra in runs:
         subprocess.run(
-            ["cargo", "bench", "-p", "encoders-bench", "--bench", bench, *extra],
+            ["cargo", "bench", "-p", "encoders-bench", *extra],
             cwd=ROOT,
             check=True,
         )
@@ -255,13 +261,15 @@ def bars(
     log: bool,
     unit: str,
     sub: dict[str, str] | None = None,
+    multi: set[str] = frozenset(),
     mode: str = "light",
 ):
     """Vertical bars, lowest to highest. `HIGHLIGHT` takes categorical slot 1
     at full saturation; the rest get their own slots at `OTHER_SATURATION`.
     Values in mono above each bar; only the highlight label wears its color.
     `sub` adds a smaller muted line under a bar's value (an approximate rate
-    in other units)."""
+    in other units). Bars in `multi` get an asterisk on their label's first
+    line and `MULTI_NOTE` under the chart."""
     t = TOKENS[mode]
     fams = fonts.register()
     plt.rcParams["font.family"] = [fams["text"], "DejaVu Sans"]
@@ -325,9 +333,11 @@ def bars(
                 zorder=5,
             )
     ax.set_xticks(list(xs))
-    ax.set_xticklabels(
-        [labels.get(k, k) for k, _ in items], fontsize=8.5, color=t["ink2"]
-    )
+    def tick(k: str) -> str:
+        first, *rest = labels.get(k, k).split("\n")
+        return "\n".join([first + ("*" if k in multi else ""), *rest])
+
+    ax.set_xticklabels([tick(k) for k, _ in items], fontsize=8.5, color=t["ink2"])
     for lab, (k, _) in zip(ax.get_xticklabels(), items):
         if k in HIGHLIGHT:
             lab.set_color(t["ink"])
@@ -342,6 +352,18 @@ def bars(
         pad=12,
     )
     fig.tight_layout()
+    if any(k in multi for k, _ in items):
+        # Bottom right, clear of the tick labels and the axis title.
+        fig.subplots_adjust(bottom=fig.subplotpars.bottom + 0.04)
+        fig.text(
+            0.985,
+            0.02,
+            MULTI_NOTE,
+            ha="right",
+            va="bottom",
+            fontsize=7.5,
+            color=t["muted"],
+        )
     out.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out, facecolor=t["surface"])
     plt.close(fig)
@@ -362,17 +384,23 @@ def main():
         corpus_py = cached(CORPUS_CACHE)
 
     throughput = criterion_results("throughput")
+    throughput.update(
+        (k, v)
+        for k, v in criterion_results(ENCODERS_GROUP).items()
+        if k == "encoders-rayon"
+    )
     bars(
         throughput,
         THROUGHPUT_LABELS,
         "Throughput",
         "bytes per second",
         OUT / "throughput.png",
-        log=False,
+        log=True,
         unit="B/s",
+        multi=THROUGHPUT_MULTI,
     )
 
-    for group, py, column, labels, title, noun, out in (
+    for group, py, column, labels, title, noun, out, multi in (
         (
             "queries",
             qps_py,
@@ -381,6 +409,7 @@ def main():
             "Query throughput, unbatched",
             "queries",
             "qps.png",
+            set(),
         ),
         (
             "corpus",
@@ -390,6 +419,7 @@ def main():
             "Document throughput, batched",
             "docs",
             "corpus.png",
+            CORPUS_MULTI,
         ),
     ):
         by, tx = rates(group, py, column)
@@ -402,6 +432,7 @@ def main():
             log=False,
             unit="B/s",
             sub={k: f"≈{fmt_rate(v, noun)} {noun}/s" for k, v in tx.items()},
+            multi=multi,
         )
 
 

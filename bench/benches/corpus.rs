@@ -3,11 +3,11 @@
 //! question-sized `queries` bench) through each library's batch API. The
 //! readme chart also shows an approximate documents/s, from the text count
 //! and size recorded by `common::record_texts`. Mirrored for python by `py/qps.py --corpus`.
+//! The throughput chart reuses the encoders bar from here.
 //!
-//! - `encoders`: `encode` over the batch on one thread, built with
-//!   `--features potion-base-8m` (the same model as model2vec-rs, stored as
-//!   float32). With `--features rayon` this is recorded as
-//!   `encoders-rayon` on every core and model2vec-rs is skipped.
+//! - `encoders-rayon`: `encode` over the batch on every core, recorded only
+//!   with `--features rayon` (which skips model2vec-rs). The single-threaded
+//!   batch encode is the `throughput` bench's encoders bar.
 //! - `model2vec-rs`: model2vec's default model (`minishlab/potion-base-8M`,
 //!   256 dimensions), downloaded through hf-hub on first run. Its `encode`
 //!   tokenizes and pools each document in a rayon parallel iterator, so it
@@ -20,12 +20,6 @@ use std::time::Duration;
 
 mod common;
 
-/// Criterion id of the encoders bar; `--features rayon` records a second one.
-const ENCODERS_ID: &str = if cfg!(feature = "rayon") {
-    "encoders-rayon"
-} else {
-    "encoders"
-};
 use common::load_answers;
 
 const MODEL2VEC_DEFAULT: &str = "minishlab/potion-base-8M";
@@ -42,11 +36,11 @@ fn bench_corpus(c: &mut Criterion) {
     group.sample_size(10);
     group.sampling_mode(SamplingMode::Flat);
 
-    group.bench_function(ENCODERS_ID, |b| {
-        b.iter(|| black_box(encoders::encode(black_box(batch))));
-    });
     if cfg!(feature = "rayon") {
-        // Only the encoders bar differs between builds.
+        // The rayon build adds only the parallel encoders bar.
+        group.bench_function("encoders-rayon", |b| {
+            b.iter(|| black_box(encoders::encode(black_box(batch))));
+        });
         group.finish();
         return;
     }

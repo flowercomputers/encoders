@@ -2,12 +2,11 @@
 # comparison crates (tantivy, model2vec-rs, ...) stay out of encoders'
 # own dev-dependencies.
 #
-#   cargo bench -p encoders-bench --bench throughput
-#   cargo bench -p encoders-bench --bench queries --features potion-base-8m
-#   cargo bench -p encoders-bench --bench corpus --features potion-base-8m
+#   cargo bench -p encoders-bench                              # every bench
+#   cargo bench -p encoders-bench --bench corpus --features rayon
 #
-# Add `rayon` to the features to record the parallel encoders bar of
-# `throughput` and `corpus`.
+# The second run records the parallel encoders bar of `corpus`, which the
+# throughput chart borrows.
 # `py/` holds the sentence-transformers side (py/qps.py) and the script that
 # runs everything and renders the readme charts (py/charts.py).
 
@@ -29,7 +28,11 @@ criterion = { version = "0", features = ["html_reports"] }
 model2vec-rs = "0"
 parquet = { version = "58" }
 minreq = { version = "2", features = ["https-native"] }
-sha2 = { version = "0" }
+sha2 = { version = "0.11" }
+# The same hash with every hardware backend compiled out. sha2 0.11 selects
+# its backend with a global `--cfg` rather than a feature, so the software bar
+# comes from 0.10, whose `force-soft` feature doesn't leak into the copy above.
+sha2-soft = { package = "sha2", version = "0.10", features = ["force-soft"] }
 flate2 = "1"
 tokenizers = { version = "0", default-features = false, features = ["onig"] }
 tantivy = "0"
