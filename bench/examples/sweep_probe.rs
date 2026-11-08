@@ -13,7 +13,10 @@ use std::time::{Duration, Instant};
 /// Median texts/s and bytes/s over repeated passes, for `SWEEP_SECONDS`
 /// (default 1) per text set; raise it when profiling.
 fn rate(texts: &[String]) -> (f64, f64) {
-    let secs: f64 = std::env::var("SWEEP_SECONDS").ok().and_then(|s| s.parse().ok()).unwrap_or(1.0);
+    let secs: f64 = std::env::var("SWEEP_SECONDS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1.0);
     let bytes: usize = texts.iter().map(String::len).sum();
     let pass = || {
         let t = Instant::now();

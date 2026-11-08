@@ -816,7 +816,7 @@ dependencies = [
 
 [[package]]
 name = "ese"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "ese-unicode",
  "rayon",
@@ -824,7 +824,7 @@ dependencies = [
 
 [[package]]
 name = "ese-build"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "ese",
  "minreq",

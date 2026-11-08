@@ -52,7 +52,7 @@ fn bench_corpus(c: &mut Criterion) {
     let model2vec = StaticModel::from_pretrained(MODEL2VEC_DEFAULT, None, None, None)
         .unwrap_or_else(|e| panic!("model2vec-rs failed to load {MODEL2VEC_DEFAULT}: {e}"));
     group.bench_function("model2vec-rs", |b| {
-        b.iter(|| black_box(model2vec.encode_with_args(black_box(&batch), None, batch.len())));
+        b.iter(|| black_box(model2vec.encode_with_args(black_box(batch), None, batch.len())));
     });
 
     group.finish();

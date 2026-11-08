@@ -108,8 +108,8 @@ pub fn encode_uninit<E, const D: usize, L>(
         Some((params.unk, params.unk_exp))
     };
 
-    pretokenizer::for_each_word(&params.tokenizer, text, |word, kind, hashes| {
-        wordpiece::wordpiece_accumulate(&params.tokenizer, word, kind, hashes, pool, lookup, unk);
+    pretokenizer::for_each_word(&params.tokenizer, text, |word, kind, hash| {
+        wordpiece::wordpiece_accumulate(&params.tokenizer, word, kind, hash, pool, lookup, unk);
     });
 
     pool.finish_into(out, params.quant_min, params.quant_scale, params.normalize);

@@ -5,7 +5,7 @@ use core::mem::MaybeUninit;
 use crate::{
     Elem, TokenizerConfig,
     accum::Accumulator,
-    phf,
+    phf::{self, Hasher},
     pretokenizer::{WORD_BUF, WordKind},
 };
 
@@ -21,25 +21,25 @@ fn unknown<E: Elem, const D: usize>(
 
 /// Split `word` into WordPiece tokens and add each token's row to `pool`.
 /// `lookup(hash)` resolves a key hash (see [`phf`]) to its row and row
-/// exponent. `hashes[i]`, if present, is the key hash of `word[..=i]` as
-/// computed by the pre-tokenizer, so the pieces starting at 0 need no
-/// hashing pass here. A word that cannot be fully segmented, or was flagged
+/// exponent. `hash` is the word's key hash as computed by the pre-tokenizer,
+/// which settles the common case of a word that is one vocabulary entry in
+/// a single probe. A word that cannot be fully segmented, or was flagged
 /// overlong by the pre-tokenizer, becomes a single unknown token; `unk == None`
 /// means unknown tokens are dropped (model2vec semantics). A literal special
 /// token is one exact lookup, and a literal unknown token follows the same
 /// UNK policy.
 ///
-/// The hash of every candidate piece starting at one position is one pass
-/// over the bytes (each prefix's hash is the fold state after its last
-/// byte), and no piece longer than the longest vocabulary entry is tried, so
-/// a long word that is not in the vocabulary costs `O(len * max_token)`
-/// probes rather than `O(len^3)` bytes hashed.
+/// Otherwise the hash of every candidate piece starting at one position is
+/// one pass over the bytes ([`Hasher`] yields each prefix's hash), and no
+/// piece longer than the longest vocabulary entry is tried, so a long word
+/// that is not in the vocabulary costs `O(len * max_token)` probes rather
+/// than `O(len^3)` bytes hashed.
 #[inline]
 pub fn wordpiece_accumulate<E, const D: usize, L>(
     cfg: &TokenizerConfig,
     word: &str,
     kind: WordKind,
-    hashes: &[u64],
+    hash: u64,
     pool: &mut Accumulator<E, D>,
     lookup: &L,
     unk: Option<(&'static [E; D], u8)>,
@@ -69,14 +69,13 @@ pub fn wordpiece_accumulate<E, const D: usize, L>(
     // `hashes`, so a hit costs one probe and none of the search setup.
     let n = word.len();
     if n <= cfg.max_token_bytes
-        && hashes.len() == n
         && n > 0
-        && let Some((row, exp)) = lookup(hashes[n - 1])
+        && let Some((row, exp)) = lookup(hash)
     {
         pool.add(row, exp);
         return;
     }
-    segment(cfg, word, hashes, pool, lookup, unk);
+    segment(cfg, word, pool, lookup, unk);
 }
 
 /// The full greedy longest-match search, for words that are not a single
@@ -86,7 +85,6 @@ pub fn wordpiece_accumulate<E, const D: usize, L>(
 fn segment<E, const D: usize, L>(
     cfg: &TokenizerConfig,
     word: &str,
-    hashes: &[u64],
     pool: &mut Accumulator<E, D>,
     lookup: &L,
     unk: Option<(&'static [E; D], u8)>,
@@ -108,21 +106,18 @@ fn segment<E, const D: usize, L>(
     while start < n {
         let limit = n.min(start + cfg.max_token_bytes);
         // Hash of `word[start..start + k + 1]` at index k.
-        let piece_hashes: &[u64] = if start == 0 && hashes.len() >= limit {
-            &hashes[..limit]
+        let mut hs = if start == 0 {
+            Hasher::new()
         } else {
-            let mut h = if start == 0 {
-                phf::INIT
-            } else {
-                phf::fold(phf::INIT, cfg.subword_prefix.as_bytes())
-            };
-            for (slot, &b) in local.iter_mut().zip(&bytes[start..limit]) {
-                h = phf::fold_byte(h, b);
-                slot.write(h);
-            }
-            // SAFETY: the first `limit - start` slots were written just above.
-            unsafe { core::slice::from_raw_parts(local.as_ptr() as *const u64, limit - start) }
+            Hasher::with(cfg.subword_prefix.as_bytes())
         };
+        for (slot, &b) in local.iter_mut().zip(&bytes[start..limit]) {
+            hs = hs.push(b);
+            slot.write(hs.hash());
+        }
+        // SAFETY: the first `limit - start` slots were written just above.
+        let piece_hashes: &[u64] =
+            unsafe { core::slice::from_raw_parts(local.as_ptr() as *const u64, limit - start) };
         let mut end = limit;
         while end > start && !word.is_char_boundary(end) {
             end -= 1;
@@ -259,18 +254,11 @@ mod tests {
         for word in words {
             let mut slot = MaybeUninit::uninit();
             let pool = Accumulator::<u8, 2>::init(&mut slot);
-            // Alternate between pre-tokenizer-supplied prefix hashes and none.
-            let pre: Vec<u64> = (1..=word.len())
-                .filter(|&i| word.is_char_boundary(i))
-                .map(|i| phf::hash_key(&word.as_bytes()[..i]))
-                .collect();
-            let hashes: &[u64] = if word.len() % 2 == 0 { &pre } else { &[] };
-            let hashes = if pre.len() == word.len() { hashes } else { &[] };
             wordpiece_accumulate(
                 &CFG,
                 word,
                 WordKind::Normal,
-                hashes,
+                phf::hash_key(word.as_bytes()),
                 pool,
                 &lookup,
                 Some((&ROWS[0], 0)),
