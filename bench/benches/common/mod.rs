@@ -18,6 +18,20 @@ pub fn target_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../target")
 }
 
+/// Record how many texts and bytes a bench group's iteration covers, as
+/// `target/criterion/<group>/texts.json`. The group reports bytes/s; the
+/// readme charts divide by the mean text length from this file to show an
+/// approximate texts/s beneath it.
+pub fn record_texts(group: &str, texts: &[String]) -> u64 {
+    let bytes: u64 = texts.iter().map(|s| s.len() as u64).sum();
+    let dir = target_dir().join("criterion").join(group);
+    fs::create_dir_all(&dir).ok();
+    let json = format!("{{\"texts\": {}, \"bytes\": {bytes}}}\n", texts.len());
+    fs::write(dir.join("texts.json"), json)
+        .unwrap_or_else(|e| panic!("failed to write {}/texts.json: {e}", dir.display()));
+    bytes
+}
+
 /// Panics unless encoders was compiled with `model` (the embedder benches
 /// compare against model2vec-rs on the same weights).
 pub fn require_model(model: &str) {

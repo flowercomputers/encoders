@@ -1,5 +1,7 @@
-//! Queries per second when each query is embedded on its own, as in a search
-//! request path, over gooaq questions. Mirrored for python by `py/qps.py`;
+//! Throughput (bytes/s of UTF-8 input) when each query is embedded on its
+//! own, as in a search request path, over gooaq questions (about 43 bytes
+//! each). The readme chart also shows an approximate queries/s, from the
+//! text count and size recorded by `common::record_texts`. Mirrored for python by `py/qps.py`;
 //! `corpus` is the batched, document-side counterpart.
 //!
 //! - `encoders`: `encode_single`, built with `--features potion-base-8m`
@@ -29,9 +31,10 @@ fn bench_queries(c: &mut Criterion) {
     }
     // common::require_model(MODEL2VEC_DEFAULT);
     let pool = &load_sentences()[..65536];
+    let bytes = common::record_texts("queries", pool);
 
     let mut group = c.benchmark_group("queries");
-    group.throughput(Throughput::Elements(pool.len() as u64));
+    group.throughput(Throughput::Bytes(bytes));
     group.warm_up_time(Duration::from_secs(2));
     group.measurement_time(Duration::from_secs(15));
     group.sample_size(10);

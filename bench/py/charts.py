@@ -4,12 +4,16 @@
     uv run charts.py --no-bench   # re-render from the last run
     uv run charts.py --no-rust    # only the python QPS bench, then render
 
-Writes `.github/throughput.png` (bytes/s over gooaq text, log scale) and
-`.github/qps.png` (queries/s, one query per call) and `.github/corpus.png`
-(documents/s, one batch of answers). Rust numbers are read from criterion's
-`target/criterion/<group>/.../new/estimates.json`; the python numbers are
-measured by `qps.measure_queries` / `qps.measure_corpus` and cached in
-`benchmarks/qps.json` / `benchmarks/corpus.json`.
+Writes `.github/throughput.png` (bytes/s over gooaq text, log scale),
+`.github/qps.png` (gooaq questions, one per call) and `.github/corpus.png`
+(gooaq answers, one batch). The last two lead with bytes/s and show an
+approximate queries/s or documents/s beneath each value: bytes/s divided by
+the mean text length of what was measured. Rust numbers are read from
+criterion's `target/criterion/<group>/.../new/estimates.json`, with the text
+count and size the bench recorded in `target/criterion/<group>/texts.json`;
+the python numbers are measured by `qps.measure_queries` /
+`qps.measure_corpus` and cached in `benchmarks/qps.json` /
+`benchmarks/corpus.json`.
 """
 
 import json
@@ -146,12 +150,64 @@ def run_python_bench(measure, cache: Path) -> dict[str, float]:
     return qps
 
 
-def cached(cache: Path) -> dict[str, float]:
+def cached(cache: Path) -> dict:
     return json.loads(cache.read_text()) if cache.exists() else {}
 
 
-def criterion_results(group: str) -> dict[str, float]:
-    """Mean throughput per bench id in the group: bytes/s or elements/s."""
+def criterion_mean_bytes(group: str) -> float | None:
+    """Mean text length in bytes of what a bench group encodes per iteration,
+    as recorded by the bench (`common::record_texts`)."""
+    f = CRITERION / group / "texts.json"
+    if not f.exists():
+        return None
+    t = json.loads(f.read_text())
+    return t["bytes"] / t["texts"]
+
+
+def python_rates(results: dict, column: str) -> dict[str, tuple[float, float]]:
+    """`{model: (bytes/s, texts/s)}` from `qps.py` results. Caches written
+    before bytes/s was recorded hold texts/s only; those are converted with
+    the mean length of the sample `qps.py` measures."""
+    out, mean = {}, None
+    for name, r in results.items():
+        if isinstance(r, dict):
+            out[name] = (r["bytes_per_s"], r["texts_per_s"])
+        else:
+            if mean is None:
+                from qps import _gooaq
+
+                sample = _gooaq(column)
+                mean = sum(len(s.encode()) for s in sample) / len(sample)
+            out[name] = (r * mean, r)
+    return out
+
+
+def rates(
+    group: str, py: dict, column: str
+) -> tuple[dict[str, float], dict[str, float]]:
+    """Bytes/s and approximate texts/s per bar for a bytes-headline chart."""
+    mean = criterion_mean_bytes(group)
+    by, tx = {}, {}
+    for k, (v, unit) in criterion_results(group, with_unit=True).items():
+        if unit == "Bytes":
+            by[k] = v
+            if mean:
+                tx[k] = v / mean
+        elif mean:
+            # Results from before the bench reported bytes/s.
+            by[k], tx[k] = v * mean, v
+        else:
+            print(
+                f"{group}/{k}: texts/s only and no texts.json; skipped", file=sys.stderr
+            )
+    for k, (b, t) in python_rates(py, column).items():
+        by[k], tx[k] = b, t
+    return by, tx
+
+
+def criterion_results(group: str, with_unit: bool = False) -> dict:
+    """Mean throughput per bench id in the group: bytes/s or elements/s
+    (`(rate, unit)` pairs with `with_unit`)."""
     out = {}
     for bench_json in (CRITERION / group).rglob("new/benchmark.json"):
         meta = json.loads(bench_json.read_text())
@@ -159,7 +215,8 @@ def criterion_results(group: str) -> dict[str, float]:
         secs = est["mean"]["point_estimate"] / 1e9
         ((unit, count),) = meta["throughput"].items()
         assert unit in ("Bytes", "Elements"), unit
-        out[meta["function_id"]] = count / secs
+        rate = count / secs
+        out[meta["function_id"]] = (rate, unit) if with_unit else rate
     if not out:
         print(
             f"no criterion results under {CRITERION / group}; skipping its chart",
@@ -197,11 +254,14 @@ def bars(
     *,
     log: bool,
     unit: str,
+    sub: dict[str, str] | None = None,
     mode: str = "light",
 ):
     """Vertical bars, lowest to highest. `HIGHLIGHT` takes categorical slot 1
     at full saturation; the rest get their own slots at `OTHER_SATURATION`.
-    Values in mono above each bar; only the highlight label wears its color."""
+    Values in mono above each bar; only the highlight label wears its color.
+    `sub` adds a smaller muted line under a bar's value (an approximate rate
+    in other units)."""
     t = TOKENS[mode]
     fams = fonts.register()
     plt.rcParams["font.family"] = [fams["text"], "DejaVu Sans"]
@@ -235,22 +295,35 @@ def bars(
         ax.yaxis.set_major_locator(FixedLocator(decades))
         ax.yaxis.set_minor_locator(NullLocator())
     else:
-        ax.set_ylim(0, hi * 1.12)
+        ax.set_ylim(0, hi * (1.2 if sub else 1.12))
     ax.yaxis.set_major_formatter(
         FuncFormatter(lambda v, _: fmt_rate(v, unit) if v > 0 else "0")
     )
     for x, (k, v), col in zip(xs, items, cols):
+        line = (sub or {}).get(k)
         ax.annotate(
             fmt_rate(v, unit),
             (x, v),
             textcoords="offset points",
-            xytext=(0, 5),
+            xytext=(0, 15 if line else 5),
             ha="center",
             fontsize=8,
             family=fams["mono"],
             color=col if k in HIGHLIGHT else t["ink2"],
             zorder=5,
         )
+        if line:
+            ax.annotate(
+                line,
+                (x, v),
+                textcoords="offset points",
+                xytext=(0, 5),
+                ha="center",
+                fontsize=6.5,
+                family=fams["mono"],
+                color=t["muted"],
+                zorder=5,
+            )
     ax.set_xticks(list(xs))
     ax.set_xticklabels(
         [labels.get(k, k) for k, _ in items], fontsize=8.5, color=t["ink2"]
@@ -299,25 +372,37 @@ def main():
         unit="B/s",
     )
 
-    bars(
-        criterion_results("queries") | qps_py,
-        QPS_LABELS,
-        "Queries per second, unbatched",
-        "queries per second",
-        OUT / "qps.png",
-        log=False,
-        unit="qps",
-    )
-
-    bars(
-        criterion_results("corpus") | corpus_py,
-        CORPUS_LABELS,
-        "Documents per second, batched",
-        "documents per second",
-        OUT / "corpus.png",
-        log=False,
-        unit="dps",
-    )
+    for group, py, column, labels, title, noun, out in (
+        (
+            "queries",
+            qps_py,
+            "question",
+            QPS_LABELS,
+            "Query throughput, unbatched",
+            "queries",
+            "qps.png",
+        ),
+        (
+            "corpus",
+            corpus_py,
+            "answer",
+            CORPUS_LABELS,
+            "Document throughput, batched",
+            "docs",
+            "corpus.png",
+        ),
+    ):
+        by, tx = rates(group, py, column)
+        bars(
+            by,
+            labels,
+            title,
+            "bytes per second",
+            OUT / out,
+            log=False,
+            unit="B/s",
+            sub={k: f"≈{fmt_rate(v, noun)} {noun}/s" for k, v in tx.items()},
+        )
 
 
 if __name__ == "__main__":

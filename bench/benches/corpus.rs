@@ -1,6 +1,8 @@
-//! Documents per second when indexing a corpus: one batch of gooaq answers
-//! (paragraph-length, unlike the question-sized `queries` bench) through each
-//! library's batch API. Mirrored for python by `py/qps.py --corpus`.
+//! Throughput (bytes/s of UTF-8 input) when indexing a corpus: one batch of
+//! gooaq answers (paragraph-length, about 253 bytes each, unlike the
+//! question-sized `queries` bench) through each library's batch API. The
+//! readme chart also shows an approximate documents/s, from the text count
+//! and size recorded by `common::record_texts`. Mirrored for python by `py/qps.py --corpus`.
 //!
 //! - `encoders`: `encode` over the batch on one thread, built with
 //!   `--features potion-base-8m` (the same model as model2vec-rs, stored as
@@ -31,10 +33,10 @@ const MODEL2VEC_DEFAULT: &str = "minishlab/potion-base-8M";
 fn bench_corpus(c: &mut Criterion) {
     // common::require_model(MODEL2VEC_DEFAULT);
     let batch = &load_answers()[..65536];
-    let n = batch.len();
+    let bytes = common::record_texts("corpus", batch);
 
     let mut group = c.benchmark_group("corpus");
-    group.throughput(Throughput::Elements(n as u64));
+    group.throughput(Throughput::Bytes(bytes));
     group.warm_up_time(Duration::from_secs(2));
     group.measurement_time(Duration::from_secs(15));
     group.sample_size(10);

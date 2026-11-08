@@ -1,13 +1,14 @@
 """Embedding rate through sentence-transformers, mirroring the Rust benches.
 
-Default (benches/queries.rs): queries per second with each gooaq question
-encoded by its own `encode` call, cycling through the first 4096 for about
-15 s per model.
+Default (benches/queries.rs): each gooaq question encoded by its own
+`encode` call, cycling through the first 4096 for about 15 s per model.
 
-`--corpus` (benches/corpus.rs): documents per second encoding the first 4096
-gooaq answers as one batch, repeatedly for about 15 s per model, first pass
-discarded as warm-up. The Hugging Face tokenizer spreads the batch across
-every core.
+`--corpus` (benches/corpus.rs): the first 4096 gooaq answers encoded as one
+batch, repeatedly for about 15 s per model, first pass discarded as warm-up.
+The Hugging Face tokenizer spreads the batch across every core.
+
+Both report texts per second and bytes per second of UTF-8 input; the readme
+charts lead with bytes per second.
 
 Torch is limited to one thread in both. Defaults to model2vec's default model
 and all-MiniLM-L6-v2; pass model names to override.
@@ -37,10 +38,12 @@ def _gooaq(column: str) -> list[str]:
     return load_dataset("sentence-transformers/gooaq", split="train")[column][:N]
 
 
-def measure_queries(models: list[str]) -> dict[str, float]:
-    """Queries per second for each model, one `encode` call per question."""
+def measure_queries(models: list[str]) -> dict[str, dict[str, float]]:
+    """Queries and bytes per second for each model, one `encode` call per
+    question."""
     torch.set_num_threads(1)
     queries = _gooaq("question")
+    sizes = [len(q.encode()) for q in queries]
     out = {}
     for name in models:
         model = load_model(name, require_cpu=True)
@@ -48,27 +51,31 @@ def measure_queries(models: list[str]) -> dict[str, float]:
             model.encode(q)
 
         done = 0
+        nbytes = 0
         start = time.perf_counter()
         while (elapsed := time.perf_counter() - start) < BENCH_TIME:
             model.encode(queries[done % len(queries)])
+            nbytes += sizes[done % len(queries)]
             done += 1
             if done % 256 == 0:
                 print(f"{name}: {done / elapsed:9.1f} queries/s ({done} queries)", end="\r")
         elapsed = time.perf_counter() - start
         print(
-            f"{name}: {done / elapsed:9.1f} queries/s "
+            f"{name}: {done / elapsed:9.1f} queries/s, {nbytes / elapsed / 1e6:.3f} MB/s "
             f"({done} queries, {elapsed / done * 1e6:.1f} us/query)"
             "          "
         )
-        out[name] = done / elapsed
+        out[name] = {"texts_per_s": done / elapsed, "bytes_per_s": nbytes / elapsed}
     return out
 
 
-def measure_corpus(models: list[str]) -> dict[str, float]:
-    """Documents per second for each model, the 4096 answers as one batch."""
+def measure_corpus(models: list[str]) -> dict[str, dict[str, float]]:
+    """Documents and bytes per second for each model, the 4096 answers as one
+    batch."""
     torch.set_num_threads(1)
     docs = _gooaq("answer")
     n = len(docs)
+    nbytes = sum(len(d.encode()) for d in docs)
     out = {}
     for name in models:
         model = load_model(name, require_cpu=True)
@@ -85,11 +92,11 @@ def measure_corpus(models: list[str]) -> dict[str, float]:
         times = times[1:]  # first pass is warm-up
         mean = sum(times) / len(times)
         print(
-            f"{name}: {n / mean:9.1f} docs/s "
+            f"{name}: {n / mean:9.1f} docs/s, {nbytes / mean / 1e6:.3f} MB/s "
             f"(mean of {len(times)} passes over {n} docs, {mean * 1e3:.1f} ms/pass)"
             "          "
         )
-        out[name] = n / mean
+        out[name] = {"texts_per_s": n / mean, "bytes_per_s": nbytes / mean}
     return out
 
 
