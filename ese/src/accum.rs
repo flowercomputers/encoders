@@ -66,6 +66,17 @@ fn sum_block<E: Elem, const D: usize, const B: usize>(rows: &[&[E; D]], off: usi
             acc[j] = E::add(acc[j], r[j]);
         }
     }
+    // For u8 rows, keep the u16 lane sums opaque to the conversion below.
+    // Without this, LLVM vectorizes the whole block starting from the f32
+    // stores of some callers (`drain`), and their four-wide f32 vectors
+    // became four-wide u16 accumulators: four bytes per load and every
+    // widening add half empty. u16 rows (u32 lanes) and f32 rows already
+    // match a four-wide f32 vector, so they skip the round trip.
+    let acc = if core::mem::size_of::<E>() == 1 {
+        core::hint::black_box(acc)
+    } else {
+        acc
+    };
     let mut out = [0.0f32; B];
     for j in 0..B {
         out[j] = E::acc_to_f32(acc[j]);
