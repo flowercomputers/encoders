@@ -87,7 +87,8 @@ THROUGHPUT_LABELS = {
     "gzip": "gzip\nflate2 crate",
     "tantivy_index": "tantivy index\nin-memory",
 }
-# encoders is built with model2vec-rs's model (potion-base-8M, float32) here.
+# encoders runs at its default model, width and storage here, not
+# model2vec-rs's potion-base-8M.
 # The batched chart shows only the parallel encoders bar; single-text calls
 # never go parallel, so the unbatched one shows only the single-threaded bar.
 _COMPARED = {

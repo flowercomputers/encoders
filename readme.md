@@ -82,7 +82,7 @@ The model [hotchpotch/bekko-static-embedding-v1](https://huggingface.co/hotchpot
       <td align="right">40</td>
       <td align="right">53.7</td>
       <td align="right">43.7</td>
-      <td align="right">258 / 514 / 1026 MiB</td>
+      <td align="right">199 / 396 / 791 MiB</td>
     </tr>
     <tr>
       <td><a href="https://huggingface.co/flowercomputers/bekko-static-v1-slim-100k"><b><code>bekko-static-v1-slim-100k</code></b></a> (default, at <code>mrl-512</code>)</td>
@@ -90,7 +90,7 @@ The model [hotchpotch/bekko-static-embedding-v1](https://huggingface.co/hotchpot
       <td align="right">25</td>
       <td align="right">52.9</td>
       <td align="right">43.0</td>
-      <td align="right">129 / 257 / 513 MiB</td>
+      <td align="right">100 / 198 / 396 MiB</td>
     </tr>
     <tr>
       <td><a href="https://huggingface.co/flowercomputers/bekko-static-v1-slim-75k"><code>bekko-static-v1-slim-75k</code></a></td>
@@ -98,7 +98,7 @@ The model [hotchpotch/bekko-static-embedding-v1](https://huggingface.co/hotchpot
       <td align="right">25</td>
       <td align="right">52.1</td>
       <td align="right">42.2</td>
-      <td align="right">129 / 257 / 513 MiB</td>
+      <td align="right">75 / 149 / 297 MiB</td>
     </tr>
     <tr>
       <td><a href="https://huggingface.co/flowercomputers/bekko-static-v1-slim-50k"><code>bekko-static-v1-slim-50k</code></a></td>
@@ -106,7 +106,7 @@ The model [hotchpotch/bekko-static-embedding-v1](https://huggingface.co/hotchpot
       <td align="right">25</td>
       <td align="right">50.2</td>
       <td align="right">40.4</td>
-      <td align="right">65 / 129 / 257 MiB</td>
+      <td align="right">50 / 99 / 198 MiB</td>
     </tr>
     <tr>
       <td><a href="https://huggingface.co/flowercomputers/bekko-static-v1-slim-32k"><code>bekko-static-v1-slim-32k</code></a></td>
@@ -114,7 +114,7 @@ The model [hotchpotch/bekko-static-embedding-v1](https://huggingface.co/hotchpot
       <td align="right">14</td>
       <td align="right">49.3</td>
       <td align="right">39.9</td>
-      <td align="right">32 / 64 / 128 MiB</td>
+      <td align="right">32 / 63 / 127 MiB</td>
     </tr>
   </tbody>
 </table>
@@ -140,55 +140,55 @@ Small, quick models distilled by [MinishLab](https://github.com/MinishLab) with 
       <td><a href="https://huggingface.co/minishlab/potion-base-2M"><code>potion-base-2m</code></a></td>
       <td align="right">64</td>
       <td>general purpose</td>
-      <td align="right">2.3 / 4.3 / 8.3 MiB</td>
+      <td align="right">2.1 / 3.9 / 7.6 MiB</td>
     </tr>
     <tr>
       <td><a href="https://huggingface.co/minishlab/potion-base-4M"><code>potion-base-4m</code></a></td>
       <td align="right">128</td>
       <td>general purpose</td>
-      <td align="right">4.3 / 8.3 / 16 MiB</td>
+      <td align="right">3.9 / 7.6 / 15 MiB</td>
     </tr>
     <tr>
       <td><a href="https://huggingface.co/minishlab/potion-base-8M"><code>potion-base-8m</code></a></td>
       <td align="right">256</td>
       <td>general purpose</td>
-      <td align="right">8.3 / 16 / 32 MiB</td>
+      <td align="right">7.6 / 15 / 29 MiB</td>
     </tr>
     <tr>
       <td><a href="https://huggingface.co/minishlab/potion-base-32M"><code>potion-base-32m</code></a></td>
       <td align="right">512</td>
       <td>general purpose, larger vocabulary</td>
-      <td align="right">33 / 65 / 129 MiB</td>
+      <td align="right">32 / 63 / 125 MiB</td>
     </tr>
     <tr>
       <td><a href="https://huggingface.co/minishlab/potion-retrieval-32M"><code>potion-retrieval-32m</code></a></td>
       <td align="right">512</td>
       <td>tuned for retrieval</td>
-      <td align="right">33 / 65 / 129 MiB</td>
+      <td align="right">32 / 63 / 125 MiB</td>
     </tr>
     <tr>
       <td><a href="https://huggingface.co/minishlab/potion-science-8M"><code>potion-science-8m</code></a></td>
       <td align="right">256</td>
       <td>scientific text</td>
-      <td align="right">8.3 / 16 / 32 MiB</td>
+      <td align="right">7.6 / 15 / 29 MiB</td>
     </tr>
     <tr>
       <td><a href="https://huggingface.co/minishlab/potion-science-32M"><code>potion-science-32m</code></a></td>
       <td align="right">256</td>
       <td>scientific text, larger vocabulary</td>
-      <td align="right">33 / 65 / 129 MiB</td>
+      <td align="right">32 / 63 / 124 MiB</td>
     </tr>
     <tr>
       <td><a href="https://huggingface.co/minishlab/potion-code-16M"><code>potion-code-16m</code></a></td>
       <td align="right">256</td>
       <td>source code; ships per-token weights, so use <code>int16</code> or <code>float32</code></td>
-      <td align="right">17 / 33 / 65 MiB</td>
+      <td align="right">16 / 31 / 62 MiB</td>
     </tr>
     <tr>
       <td><a href="https://huggingface.co/minishlab/M2V_base_output"><code>m2v-base-output</code></a></td>
       <td align="right">256</td>
       <td>the original model2vec release, superseded by potion</td>
-      <td align="right">8.3 / 16 / 32 MiB</td>
+      <td align="right">7.6 / 15 / 29 MiB</td>
     </tr>
   </tbody>
 </table>
@@ -212,12 +212,12 @@ Trained by the [sentence-transformers](https://sbert.net) team with Matryoshka l
     <tr>
       <td><a href="https://huggingface.co/sentence-transformers/static-retrieval-mrl-en-v1"><code>static-retrieval-mrl-en-v1</code></a></td>
       <td>English, tuned for retrieval</td>
-      <td align="right">32 / 64 / 128 MiB</td>
+      <td align="right">30 / 61 / 121 MiB</td>
     </tr>
     <tr>
       <td><a href="https://huggingface.co/sentence-transformers/static-similarity-mrl-multilingual-v1"><code>static-similarity-mrl-multilingual-v1</code></a></td>
       <td>multilingual, tuned for similarity rather than retrieval</td>
-      <td align="right">129 / 257 / 513 MiB</td>
+      <td align="right">105 / 210 / 419 MiB</td>
     </tr>
   </tbody>
 </table>
@@ -243,13 +243,13 @@ Static models aligned with a transformer teacher, so an index built with the tea
       <td><a href="https://huggingface.co/stephantulkens/NIFE-mxbai-embed-large-v1"><code>nife-mxbai-embed-large-v1</code></a></td>
       <td align="right">1024</td>
       <td><a href="https://huggingface.co/mixedbread-ai/mxbai-embed-large-v1">mixedbread-ai/mxbai-embed-large-v1</a></td>
-      <td align="right">129 / 257 / 513 MiB</td>
+      <td align="right">108 / 214 / 427 MiB</td>
     </tr>
     <tr>
       <td><a href="https://huggingface.co/stephantulkens/NIFE-gte-modernbert-base"><code>nife-gte-modernbert-base</code></a></td>
       <td align="right">768</td>
       <td><a href="https://huggingface.co/Alibaba-NLP/gte-modernbert-base">Alibaba-NLP/gte-modernbert-base</a></td>
-      <td align="right">97 / 193 / 385 MiB</td>
+      <td align="right">75 / 149 / 297 MiB</td>
     </tr>
   </tbody>
 </table>

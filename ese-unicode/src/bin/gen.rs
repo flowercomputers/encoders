@@ -1,5 +1,7 @@
-//! Generates `src/tables.rs` by asking the reference crates about every
-//! code point. Run with `cargo run -p ese-unicode --features gen --bin gen`.
+//! Generates `src/tables.rs` by asking the reference crates (and, for
+//! lowercase forms and whitespace, the standard library) about every code
+//! point. Run with `cargo run -p ese-unicode --features gen --bin gen` on a
+//! toolchain whose `char::UNICODE_VERSION` matches the reference crates'.
 //!
 //! Layout (see `lib.rs`): u8 class pages for every code point; for the
 //! pages that contain any normalization mapping, a 256-bit bitmap whose

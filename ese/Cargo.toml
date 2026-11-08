@@ -2,7 +2,7 @@
 name = "ese"
 version = "0.3.0"
 edition = "2024"
-description = "Extremely Static Embeddings: runtime for compiled-in static embedding models"
+description = "Embedded Static Embeddings: runtime for compiled-in static embedding models"
 license = "Apache-2.0"
 authors = ["W. Turner Abney <wta@ieee.org>"]
 homepage = "https://github.com/flowercomputers/encoders/tree/master/ese"

@@ -2,7 +2,8 @@
 name = "ese-unicode"
 # MAJOR.MINOR is the Unicode version the tables implement (Unicode's own
 # third component is always 0); PATCH is for changes to this crate within
-# that Unicode version. `tests/reference.rs` checks the tables agree.
+# that Unicode version. `tests/reference.rs` checks the tables agree, on a
+# toolchain whose standard library implements the same Unicode version.
 version = "17.0.2"
 edition = "2024"
 rust-version = "1.88"

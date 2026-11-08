@@ -1,4 +1,6 @@
-//! Re-derives every table entry from the reference crates.
+//! Re-derives every table entry from the reference crates and, for
+//! lowercase forms and whitespace, the standard library, so it needs a
+//! toolchain whose `char::UNICODE_VERSION` matches the tables'.
 
 use ese_unicode::{class, class_of, normalize};
 use unicode_general_category::{GeneralCategory, get_general_category};

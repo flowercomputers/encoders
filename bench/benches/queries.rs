@@ -4,8 +4,9 @@
 //! text count and size recorded by `common::record_texts`. Mirrored for python by `py/qps.py`;
 //! `corpus` is the batched, document-side counterpart.
 //!
-//! - `encoders`: `encode_single`, built with `--features potion-base-8m`
-//!   (the same model as model2vec-rs, stored as float32).
+//! - `encoders`: `encode_single` at its default model, width and storage
+//!   (not model2vec-rs's model; build with `--features potion-base-8m,float32`
+//!   for a same-model comparison).
 //! - `model2vec-rs`: `encode_single` with model2vec's default model
 //!   (`minishlab/potion-base-8M`), downloaded through hf-hub on first run.
 //!
