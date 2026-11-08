@@ -98,7 +98,7 @@ fn bench_throughput(c: &mut Criterion) {
         });
     }
 
-    group.bench_function("sha256_soft", |b| {
+    group.bench_function("sha256", |b| {
         b.iter(|| {
             for s in sentences {
                 black_box(Sha256::digest(black_box(s).as_bytes()));

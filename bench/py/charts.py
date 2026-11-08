@@ -4,7 +4,7 @@
     uv run charts.py --no-bench   # re-render from the last run
     uv run charts.py --no-rust    # only the python QPS bench, then render
 
-Writes `.github/throughput.png` (bytes/s over gooaq text, log scale),
+Writes `.github/throughput.png` (bytes/s over gooaq text),
 `.github/qps.png` (gooaq questions, one per call) and `.github/corpus.png`
 (gooaq answers, one batch). The last two lead with bytes/s and show an
 approximate queries/s or documents/s beneath each value: bytes/s divided by
@@ -44,8 +44,8 @@ THROUGHPUT_LABELS = {
     "encoders": "encoders",
     "encoders-rayon": "encoders\n(rayon)",
     "tokenize": "HF tokenizers\nWordPiece only",
-    "sha256_soft": "SHA-256\nsoftware backend",
-    "gzip": "gzip\nflate2",
+    "sha256_soft": "SHA-256\nsha2 crate",
+    "gzip": "gzip\nflate2 crate",
     "tantivy_index": "tantivy index\nin-memory",
 }
 # encoders is built with model2vec-rs's model (potion-base-8M, float32) here.
@@ -366,9 +366,9 @@ def main():
         throughput,
         THROUGHPUT_LABELS,
         "Throughput",
-        "bytes per second, log scale",
+        "bytes per second",
         OUT / "throughput.png",
-        log=True,
+        log=False,
         unit="B/s",
     )
 

@@ -269,13 +269,13 @@ Otherwise, check out the [`ese-build`](./ese-build) and [`ese`](./ese) crates, w
 
 The idea behind encoders (and the crate that underpins it, [`ese`](./ese)) is simple: static embedding models are essentially lookup tables from token IDs to weights. Why not just resolve the tokens to their weights with a compile-time map? So, that's exactly what it does—with a lot of other performance-oriented tricks to boot!
 
-The following chart shows unbatched throughput on the query half of the GooAQ dataset, approximating query-side search workloads:
+The first chart here shows unbatched throughput on the question half of the GooAQ dataset (~43 bytes per query), one query per call, approximating query-side search workloads:
 
-![Chart comparing queries per second, one query per call, on encoders vs. other methods to embed text](https://raw.githubusercontent.com/flowercomputers/encoders/refs/heads/master/.github/qps.png)
+![Chart comparing throughput on queries, one per call, in bytes and approximate queries per second, on encoders vs. other methods to embed text](https://raw.githubusercontent.com/flowercomputers/encoders/refs/heads/master/.github/qps.png)
 
-The following chart shows unbatched throughput on documents (generally pretty long inputs) in the GooAQ dataset, approximating index-side workloads:
+The second shows batched throughput on the answer half (generally much longer inputs, ~253 bytes a piece), approximating indexing workloads:
 
-![Chart comparing documents per second, embedded in batches, on encoders vs. other methods to embed text](https://raw.githubusercontent.com/flowercomputers/encoders/refs/heads/master/.github/corpus.png)
+![Chart comparing throughput on documents embedded in batches, in bytes and approximate documents per second, on encoders vs. other methods to embed text](https://raw.githubusercontent.com/flowercomputers/encoders/refs/heads/master/.github/corpus.png)
 
 **Build time.** [`ese-build`](./ese-build) downloads the model, reads how it expects text to be tokenized and pooled from the model's own files, quantizes the weights, and writes them out as a perfect-hash table keyed by vocabulary entry. That table is compiled into your binary, so there is nothing to load or initialize at runtime.
 
