@@ -147,21 +147,34 @@ where
 
     /// All of a block's whole-word lookups first, in a loop with no branches
     /// on their results, so their dependent loads (seed, then verifier)
-    /// overlap across words; then each word in order.
+    /// overlap across words; then each word in order. Only the lookup
+    /// results are stored between the passes; token positions are recomputed
+    /// from the bitmasks.
     #[inline(always)]
-    fn block_words(&mut self, text: &[u8], tokens: &[pretokenizer::BlockToken]) {
+    fn block_words(
+        &mut self,
+        text: &[u8; pretokenizer::BLOCK + 8],
+        starts: u64,
+        ends: u64,
+        max_chars: usize,
+    ) {
         let mut found =
             [MaybeUninit::<Option<(&'static [E; D], u8)>>::uninit(); pretokenizer::BLOCK];
-        for (slot, t) in found.iter_mut().zip(tokens) {
-            slot.write((self.lookup)(t.hash));
+        let mut n = 0;
+        let mut ss = starts;
+        while ss != 0 {
+            let (s, e) = pretokenizer::next_token(&mut ss, ends);
+            let (_, _, hash) = pretokenizer::block_token(text, s, e, max_chars);
+            found[n].write((self.lookup)(hash));
+            n += 1;
         }
-        for (slot, t) in found.iter().zip(tokens) {
-            // SAFETY: the first `tokens.len()` slots were written above.
+        let mut ss = starts;
+        for slot in &found[..n] {
+            let (s, e) = pretokenizer::next_token(&mut ss, ends);
+            let (word, kind, hash) = pretokenizer::block_token(text, s, e, max_chars);
+            // SAFETY: the first `n` slots were written above.
             let found = unsafe { slot.assume_init() };
-            let s = t.start as usize;
-            // SAFETY: block tokens are ASCII.
-            let word = unsafe { core::str::from_utf8_unchecked(&text[s..s + t.len as usize]) };
-            match t.kind {
+            match kind {
                 pretokenizer::WordKind::Normal => wordpiece::accumulate_found(
                     self.cfg,
                     word,
@@ -170,7 +183,7 @@ where
                     self.lookup,
                     self.unk,
                 ),
-                kind => self.word(word, kind, t.hash),
+                kind => self.word(word, kind, hash),
             }
         }
     }

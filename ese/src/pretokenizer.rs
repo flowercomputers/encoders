@@ -18,8 +18,6 @@
 //! token, so a word that overflows the limit is reported as `overlong` and
 //! its remaining characters are not stored.
 
-use core::mem::MaybeUninit;
-
 use ese_unicode::{class, class_of, normalize};
 
 use crate::{TokenizerConfig, phf};
@@ -35,14 +33,15 @@ pub enum WordKind {
     Literal,
 }
 
-/// A pre-token found inside one block: `len` bytes from `start` of the
-/// block's normalized (ASCII) bytes, with its key hash.
-#[derive(Clone, Copy, Debug)]
-pub struct BlockToken {
-    pub start: u8,
-    pub len: u8,
-    pub kind: WordKind,
-    pub hash: u64,
+/// Pop the first token from block bitmasks: `starts` has a bit at every
+/// token's first byte, `ends` at every token's last byte. Returns the
+/// token's first and last byte offsets.
+#[inline(always)]
+pub fn next_token(starts: &mut u64, ends: u64) -> (usize, usize) {
+    let s = starts.trailing_zeros() as usize;
+    *starts &= *starts - 1;
+    let e = s + (ends >> s).trailing_zeros() as usize;
+    (s, e)
 }
 
 /// Receives pre-tokens, in input order.
@@ -51,18 +50,38 @@ pub trait WordSink {
     /// literal special token or an overlong word).
     fn word(&mut self, word: &str, kind: WordKind, hash: u64);
 
-    /// Consecutive pre-tokens from one block: token `t` is
-    /// `text[t.start..t.start + t.len]`, ASCII. The default hands them to
-    /// [`WordSink::word`] one at a time; a sink can override it to look all
-    /// of them up before using any, so the lookups' memory loads overlap.
+    /// Consecutive pre-tokens from one block, given as bitmasks over `text`
+    /// (see [`next_token`]); all ASCII, each at most `BLOCK` bytes. A token
+    /// longer than `max_chars` is overlong. The default hashes them and hands
+    /// them to [`WordSink::word`] one at a time; a sink can override it to
+    /// look all of them up before using any, so the lookups' memory loads
+    /// overlap.
     #[inline(always)]
-    fn block_words(&mut self, text: &[u8], tokens: &[BlockToken]) {
-        for t in tokens {
-            let s = t.start as usize;
-            // SAFETY: block tokens are ASCII.
-            let word = unsafe { core::str::from_utf8_unchecked(&text[s..s + t.len as usize]) };
-            self.word(word, t.kind, t.hash);
+    fn block_words(&mut self, text: &[u8; BLOCK + 8], starts: u64, ends: u64, max_chars: usize) {
+        let mut starts = starts;
+        while starts != 0 {
+            let (s, e) = next_token(&mut starts, ends);
+            let (word, kind, hash) = block_token(text, s, e, max_chars);
+            self.word(word, kind, hash);
         }
+    }
+}
+
+/// The token `text[s..=e]` of a block: its text, kind and key hash.
+#[inline(always)]
+pub fn block_token(
+    text: &[u8; BLOCK + 8],
+    s: usize,
+    e: usize,
+    max_chars: usize,
+) -> (&str, WordKind, u64) {
+    let len = e - s + 1;
+    // SAFETY: block tokens are ASCII.
+    let word = unsafe { core::str::from_utf8_unchecked(&text[s..=e]) };
+    if len > max_chars {
+        (word, WordKind::Overlong, 0)
+    } else {
+        (word, WordKind::Normal, phf::hash_padded(&text[s..], len))
     }
 }
 
@@ -368,26 +387,9 @@ fn classify(tab: &AsciiTable, b: &[u8; BLOCK], low: &mut [u8; BLOCK + 8]) -> Mas
     m
 }
 
-/// Hand `tokens[..*ntok]` to `f` as one batch and empty it.
-#[inline(always)]
-fn hand_over<F: WordSink>(
-    f: &mut F,
-    low: &[u8],
-    tokens: &[MaybeUninit<BlockToken>; BLOCK],
-    ntok: &mut usize,
-) {
-    if *ntok > 0 {
-        // SAFETY: the caller wrote `tokens[..ntok]`.
-        let ts =
-            unsafe { core::slice::from_raw_parts(tokens.as_ptr() as *const BlockToken, *ntok) };
-        f.block_words(low, ts);
-        *ntok = 0;
-    }
-}
-
 /// Emit the tokens of block bytes `p..cut`, all word bytes, punctuation or
-/// space. A token that starts and ends inside
-/// the range goes straight to `f` from the block's own buffers. Only a word
+/// space. Tokens that start and end inside the range go to `f` as one batch
+/// of bitmasks over the block's own buffers. Only a word
 /// that continues a pending one (from an earlier block or a slow byte) or
 /// may continue past `cut` goes through `w`. `at_end` means the input ends
 /// at `cut`, so nothing continues past it.
@@ -413,40 +415,32 @@ fn fast_segment<F: WordSink>(
     if w.pending() && (word >> p) & 1 == 0 {
         w.flush(f);
     }
-    // Tokens wholly inside the range are collected and handed over together;
-    // the batch is flushed before anything goes through `w`, to keep order.
-    let mut tokens = [MaybeUninit::<BlockToken>::uninit(); BLOCK];
-    let mut ntok = 0;
     let last = cut - 1;
-    while start != 0 {
-        let s = start.trailing_zeros() as usize;
-        start &= start - 1;
-        let e = s + (end >> s).trailing_zeros() as usize;
-        let continues_in = s == p && w.pending();
-        let continues_out = e == last && !at_end && (word >> e) & 1 != 0;
-        if continues_in || continues_out {
-            hand_over(f, low, &tokens, &mut ntok);
-            w.push_run(&low[s..], e - s + 1);
-            if !continues_out {
-                w.flush(f);
-            }
-        } else {
-            let len = e - s + 1;
-            let kind = if len > w.max_chars {
-                WordKind::Overlong
-            } else {
-                WordKind::Normal
-            };
-            tokens[ntok].write(BlockToken {
-                start: s as u8,
-                len: len as u8,
-                kind,
-                hash: phf::hash_padded(&low[s..], len),
-            });
-            ntok += 1;
+    // A word byte at `p` continues the pending word: finish it through `w`.
+    if w.pending() {
+        let (s, e) = next_token(&mut start, end);
+        w.push_run(&low[s..], e - s + 1);
+        if e == last && !at_end {
+            return;
         }
+        w.flush(f);
     }
-    hand_over(f, low, &tokens, &mut ntok);
+    // A word reaching `cut` may continue past it: it goes into `w` after the
+    // others. It is the last token, so its start is the highest bit.
+    let tail = if start != 0 && !at_end && (word >> last) & 1 != 0 {
+        let s = 63 - start.leading_zeros() as usize;
+        start &= !(1 << s);
+        Some(s)
+    } else {
+        None
+    };
+    // Everything else starts and ends inside the range: one batch.
+    if start != 0 {
+        f.block_words(low, start, end, w.max_chars);
+    }
+    if let Some(s) = tail {
+        w.push_run(&low[s..], last - s + 1);
+    }
 }
 
 /// Normalize `input` and hand every pre-token to `f`, in order: runs of
