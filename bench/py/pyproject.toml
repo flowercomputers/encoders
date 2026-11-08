@@ -8,7 +8,7 @@ dependencies = [
     "bm25s[core]",
     "datasets>=4.8.4",
     "einops>=0.8.2",
-    "flowercharts",
+    "matplotlib>=3.9",
     "model2vec>=0.10.0",
     "numpy>=2.4.4",
     "peft>=0.18.1",
@@ -17,6 +17,3 @@ dependencies = [
 
 [tool.uv]
 dev-dependencies = []
-
-[tool.uv.sources]
-flowercharts = { path = "../../../flower-charts", editable = true }

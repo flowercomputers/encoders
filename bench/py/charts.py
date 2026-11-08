@@ -4,6 +4,12 @@
     uv run charts.py --no-bench   # re-render from the last run
     uv run charts.py --no-rust    # only the python QPS bench, then render
 
+The Flower Computer style comes from `flowercharts`, which isn't public.
+Without it the charts render in a plain matplotlib style; with a checkout
+next to this repo, add it to the run:
+
+    uv run --with-editable ../../../flower-charts charts.py
+
 Writes `.github/throughput.png` (bytes/s over gooaq answers, log scale; the
 parallel encoders bar is the `corpus` group's, measured once over the same
 batch),
@@ -29,9 +35,38 @@ import numpy as np
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from flowercharts import TOKENS, fonts, style_axes
 from matplotlib.colors import to_hex, to_rgb
 from matplotlib.ticker import FixedLocator, FuncFormatter, NullLocator
+
+try:
+    from flowercharts import TOKENS, fonts, style_axes
+except ImportError:
+    # Plain fallback: matplotlib's default palette and fonts, light grid.
+    TOKENS = {
+        "light": {
+            "surface": "#ffffff",
+            "ink": "#000000",
+            "ink2": "#444444",
+            "muted": "#888888",
+            "grid": "#eeeeee",
+            "axis": "#bbbbbb",
+            "series": plt.get_cmap("tab10").colors,
+        }
+    }
+
+    class fonts:
+        @staticmethod
+        def register() -> dict[str, str]:
+            return {"title": "DejaVu Sans", "text": "DejaVu Sans", "mono": "DejaVu Sans Mono"}
+
+    def style_axes(ax, t):
+        ax.set_facecolor(t["surface"])
+        ax.tick_params(colors=t["muted"], labelsize=9, length=0)
+        for side in ("top", "right", "left"):
+            ax.spines[side].set_visible(False)
+        ax.spines["bottom"].set_color(t["axis"])
+        ax.grid(True, axis="y", color=t["grid"])
+        ax.set_axisbelow(True)
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]

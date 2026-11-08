@@ -295,7 +295,7 @@ The second shows batched throughput on the answer half (generally much longer in
 
 ### Benchmarks
 
-The charts come from the [`bench`](./bench) crate (Criterion) and its Python companion, [`bench/py`](./bench/py). The benchmark workloads run over questions taken from the [GooAQ](https://huggingface.co/datasets/sentence-transformers/gooaq) dataset. To regenerate charts featured in this repo on your own machine:
+Benchmarks showing encoders show performance at default model/dtype/mrl (ones labeled rayon enable that feature, too). The charts come from the [`bench`](./bench) crate (Criterion) and its Python companion, [`bench/py`](./bench/py). The benchmark workloads run over questions taken from the [GooAQ](https://huggingface.co/datasets/sentence-transformers/gooaq) dataset. To regenerate charts featured in this repo on your own machine:
 
 ```console
 $ uv run --project bench/py bench/py/charts.py
