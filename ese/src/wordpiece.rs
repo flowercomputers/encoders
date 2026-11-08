@@ -64,9 +64,38 @@ pub fn wordpiece_accumulate<E, const D: usize, L>(
             return;
         }
     }
+    // Fast path: most words are one vocabulary entry, and the greedy search
+    // below would try the whole word first anyway. Its hash is already in
+    // `hashes`, so a hit costs one probe and none of the search setup.
+    let n = word.len();
+    if n <= cfg.max_token_bytes
+        && hashes.len() == n
+        && n > 0
+        && let Some((row, exp)) = lookup(hashes[n - 1])
+    {
+        pool.add(row, exp);
+        return;
+    }
+    segment(cfg, word, hashes, pool, lookup, unk);
+}
+
+/// The full greedy longest-match search, for words that are not a single
+/// vocabulary entry. Kept out of line so the common whole-word path above
+/// stays small.
+#[inline(never)]
+fn segment<E, const D: usize, L>(
+    cfg: &TokenizerConfig,
+    word: &str,
+    hashes: &[u64],
+    pool: &mut Accumulator<E, D>,
+    lookup: &L,
+    unk: Option<(&'static [E; D], u8)>,
+) where
+    E: Elem,
+    L: Fn(u64) -> Option<(&'static [E; D], u8)>,
+{
     let bytes = word.as_bytes();
     let n = bytes.len();
-    let prefix_state = phf::fold(phf::INIT, cfg.subword_prefix.as_bytes());
     // local[k] is the hash of the piece `word[start..start + k + 1]`.
     let mut local: [MaybeUninit<u64>; WORD_BUF] = [MaybeUninit::uninit(); WORD_BUF];
     // Pieces found so far. A word becomes one unknown token if any position
@@ -82,7 +111,11 @@ pub fn wordpiece_accumulate<E, const D: usize, L>(
         let piece_hashes: &[u64] = if start == 0 && hashes.len() >= limit {
             &hashes[..limit]
         } else {
-            let mut h = if start == 0 { phf::INIT } else { prefix_state };
+            let mut h = if start == 0 {
+                phf::INIT
+            } else {
+                phf::fold(phf::INIT, cfg.subword_prefix.as_bytes())
+            };
             for (slot, &b) in local.iter_mut().zip(&bytes[start..limit]) {
                 h = phf::fold_byte(h, b);
                 slot.write(h);
