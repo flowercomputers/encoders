@@ -13,8 +13,8 @@ crate-type = ["cdylib"]
 doc = false
 
 [dependencies]
-# Default model: bekko-static-v1-slim-100k at 512 dims, 16-bit. Add a model
-# feature, an mrl-* width or float32/int8 to change it.
+# Default model: bekko-static-v1-slim-100k at 512 dims, 8-bit. Add a model
+# feature, an mrl-* width or int16/float32 to change it.
 encoders = { path = "..", features = ["rayon"] }
 numpy = "0.28.0"
 pyo3 = { version = "0", features = ["extension-module"] }

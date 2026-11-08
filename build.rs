@@ -323,8 +323,8 @@ fn selected_dims(model: &ModelSpec) -> Option<usize> {
     Some(dims)
 }
 
-/// Storage: `int8` or `float32` when enabled, otherwise `int16`. The `int16`
-/// feature only states that choice explicitly; `int8` and `float32`
+/// Storage: `int16` or `float32` when enabled, otherwise `int8`. The `int8`
+/// feature only states that choice explicitly; `int16` and `float32`
 /// together is a contradiction.
 fn selected_quant() -> Quant {
     match (feature_on("int16"), feature_on("float32")) {

@@ -21,8 +21,8 @@
 //! - `mrl-1024` ... `mrl-32`: truncate a Matryoshka-trained model to a width
 //!   it was trained at. Omit for the model's native width (or 512 for the
 //!   unnamed default).
-//! - `int8` or `float32`: how the table is stored. With neither, it is
-//!   `int16`.
+//! - `int16` or `float32`: how the table is stored. With neither, it is
+//!   `int8`.
 //! - `rayon`: [`encode`] goes parallel from [`PARALLEL_MIN`] texts.
 //!
 //! [`encode_single`], [`encode`] and [`encode_into`] produce embeddings;

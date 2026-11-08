@@ -55,7 +55,7 @@ encoders = { version = "2", features = ["bekko-static-v1-slim-32k", "mrl-256", "
 
 - **Model.** With none enabled you get the current default, `bekko-static-v1-slim-100k` truncated to 512 dimensions. Naming a model explicitly gets its native width.
 - **Dimensions.** `mrl-1024` down to `mrl-32` truncates a Matryoshka-trained model to one of the widths it was trained at. Omit it for the model's native width; asking for a width a model was not trained at fails the build!
-- **Internal Type.** `int16` is the default, as 16-bit quantization produces almost indistinguishable outputs from f32 in practice (at half the size). `int8` is a quarter the size, with cosine agreement against f32 above 0.999 on multi-token text (so also pretty much indistinguishable).
+- **Internal Type.** `int8` is the default: a quarter the size of f32, with cosine agreement against f32 above 0.999 on multi-token text (so pretty much indistinguishable in practice). `int16` is half the size of f32 and closer still, and `float32` stores the weights unquantized.
 - **`rayon`** makes `encode` parallel for large batches. This is only likely to improve performance if your workload is routinely encoding very large batches (a couple hundred or more inputs).
 
 #### bekko models
@@ -283,7 +283,7 @@ The second shows batched throughput on the answer half (generally much longer in
 
 **Lookup.** Each token resolves to its weights with a single probe into the hash table, and WordPiece hashes every candidate piece of a word in one pass rather than one candidate at a time.
 
-**Quantization.** Weights are stored as 16-bit integers by default, or 8-bit with `int8`, each dimension with its own scale. That halves or quarters the table, and the output stays nearly indistinguishable from full precision.
+**Quantization.** Weights are stored as 8-bit integers by default, or 16-bit with `int16`, each dimension with its own scale. That quarters or halves the table, and the output stays nearly indistinguishable from full precision.
 
 **Pooling.** Token weights are summed in integer registers, so each byte of the table is read once, and converted back to floating point once at the end. Sums drain into a running total every few hundred tokens, so there's no input length limit: a whole book embeds the same way a query does, and every token counts. You shouldn't embed a whole book, though... these are sentence level models!
 
