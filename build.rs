@@ -27,7 +27,7 @@ const MRL: &[usize] = &[1024, 512, 256, 128, 64, 32];
 const CATALOG: &[ModelSpec] = &[
     ModelSpec {
         feature: "bekko-static-v1-slim-100k",
-        repo: "flower-computer/bekko-static-v1-slim-100k",
+        repo: "flowercomputers/bekko-static-v1-slim-100k",
         revision: "635eb094a82ce43f0eb882c12b31406b3d93ec26",
         dims: MRL,
         license: "MIT",
@@ -35,7 +35,7 @@ const CATALOG: &[ModelSpec] = &[
     },
     ModelSpec {
         feature: "bekko-static-v1-slim-75k",
-        repo: "flower-computer/bekko-static-v1-slim-75k",
+        repo: "flowercomputers/bekko-static-v1-slim-75k",
         revision: "48d57794b1d6b94f4535817341e6f8bf2f5b31e2",
         dims: MRL,
         license: "MIT",
@@ -43,7 +43,7 @@ const CATALOG: &[ModelSpec] = &[
     },
     ModelSpec {
         feature: "bekko-static-v1-slim-50k",
-        repo: "flower-computer/bekko-static-v1-slim-50k",
+        repo: "flowercomputers/bekko-static-v1-slim-50k",
         revision: "63abf2b319526cc06cacf85bb86e2bfcd1b5f987",
         dims: MRL,
         license: "MIT",
@@ -51,7 +51,7 @@ const CATALOG: &[ModelSpec] = &[
     },
     ModelSpec {
         feature: "bekko-static-v1-slim-32k",
-        repo: "flower-computer/bekko-static-v1-slim-32k",
+        repo: "flowercomputers/bekko-static-v1-slim-32k",
         revision: "c4ce4db02b1e50d858745b40cb80da627e26ee4c",
         dims: MRL,
         license: "MIT",

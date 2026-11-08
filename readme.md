@@ -43,7 +43,7 @@ Encoders is fast. To give you an idea of just _how_ fast, here's encoders with i
 ## Configuration and model selection
 
 > [!WARNING]
-> If you store embeddings from this crate, you should explicitly [select a model feature](https://github.com/flowercomputers/encoders/blob/791c5caaf24e590e2095ace17df137dc652d2739/Cargo.toml#L33-L52)!
+> If you store embeddings from this crate, you should explicitly [select model, quantization, and dimension features](https://github.com/flowercomputers/encoders/blob/master/Cargo.toml#L30-L68)!
 > _**We will change the default model and features between major versions**_ as better models become available!
 
 ```toml
@@ -60,9 +60,9 @@ encoders = { version = "2", features = ["bekko-static-v1-slim-32k", "mrl-256", "
 
 #### bekko models
 
-[![Chart demonstrating quality loss of `bekko-static` models as vocabulary size is reduced.](https://huggingface.co/flower-computer/bekko-static-v1-slim-32k/resolve/main/quality-vs-vocab.png)](https://huggingface.co/flower-computer/bekko-static-v1-slim-50k)
+[![Chart demonstrating quality loss of `bekko-static` models as vocabulary size is reduced.](https://huggingface.co/flowercomputers/bekko-static-v1-slim-32k/resolve/main/quality-vs-vocab.png)](https://huggingface.co/flowercomputers/bekko-static-v1-slim-50k)
 
-The model [hotchpotch/bekko-static-embedding-v1](https://huggingface.co/hotchpotch/bekko-static-embedding-v1) represents the current state-of-the-art as far as static embedding. We've trained a family of models derived from this model to shrink the vocabulary (and thus the model size), specifically for use in encoders. These are multilingual models, trained with MRL so their vectors can be truncated (reducing vector and model size at the cost of embedding quality), and licensed MIT. [Read all about it on HuggingFace](https://huggingface.co/flower-computer/bekko-static-v1-slim-100k).
+The model [hotchpotch/bekko-static-embedding-v1](https://huggingface.co/hotchpotch/bekko-static-embedding-v1) represents the current state-of-the-art as far as static embedding. We've trained a family of models derived from this model to shrink the vocabulary (and thus the model size), specifically for use in encoders. These are multilingual models, trained with MRL so their vectors can be truncated (reducing vector and model size at the cost of embedding quality), and licensed MIT. [Read all about it on HuggingFace](https://huggingface.co/flowercomputers/bekko-static-v1-slim-100k).
 
 <table>
   <thead>
@@ -85,7 +85,7 @@ The model [hotchpotch/bekko-static-embedding-v1](https://huggingface.co/hotchpot
       <td align="right">258 / 514 / 1026 MiB</td>
     </tr>
     <tr>
-      <td><a href="https://huggingface.co/flower-computer/bekko-static-v1-slim-100k"><b><code>bekko-static-v1-slim-100k</code></b></a> (default, at <code>mrl-512</code>)</td>
+      <td><a href="https://huggingface.co/flowercomputers/bekko-static-v1-slim-100k"><b><code>bekko-static-v1-slim-100k</code></b></a> (default, at <code>mrl-512</code>)</td>
       <td align="right">100k</td>
       <td align="right">25</td>
       <td align="right">52.9</td>
@@ -93,7 +93,7 @@ The model [hotchpotch/bekko-static-embedding-v1](https://huggingface.co/hotchpot
       <td align="right">129 / 257 / 513 MiB</td>
     </tr>
     <tr>
-      <td><a href="https://huggingface.co/flower-computer/bekko-static-v1-slim-75k"><code>bekko-static-v1-slim-75k</code></a></td>
+      <td><a href="https://huggingface.co/flowercomputers/bekko-static-v1-slim-75k"><code>bekko-static-v1-slim-75k</code></a></td>
       <td align="right">75k</td>
       <td align="right">25</td>
       <td align="right">52.1</td>
@@ -101,7 +101,7 @@ The model [hotchpotch/bekko-static-embedding-v1](https://huggingface.co/hotchpot
       <td align="right">129 / 257 / 513 MiB</td>
     </tr>
     <tr>
-      <td><a href="https://huggingface.co/flower-computer/bekko-static-v1-slim-50k"><code>bekko-static-v1-slim-50k</code></a></td>
+      <td><a href="https://huggingface.co/flowercomputers/bekko-static-v1-slim-50k"><code>bekko-static-v1-slim-50k</code></a></td>
       <td align="right">50k</td>
       <td align="right">25</td>
       <td align="right">50.2</td>
@@ -109,7 +109,7 @@ The model [hotchpotch/bekko-static-embedding-v1](https://huggingface.co/hotchpot
       <td align="right">65 / 129 / 257 MiB</td>
     </tr>
     <tr>
-      <td><a href="https://huggingface.co/flower-computer/bekko-static-v1-slim-32k"><code>bekko-static-v1-slim-32k</code></a></td>
+      <td><a href="https://huggingface.co/flowercomputers/bekko-static-v1-slim-32k"><code>bekko-static-v1-slim-32k</code></a></td>
       <td align="right">32k</td>
       <td align="right">14</td>
       <td align="right">49.3</td>
@@ -310,6 +310,7 @@ Encoders is brought to you by the folks at [Flower Computer](https://flowercompu
 - [Our blog!](https://flowercomputer.com/news)
 - [@flowercomputers](https://github.com/flowercomputers) on GitHub
 - [@flowercomputers](https://x.com/flowercomputers) on Twitter
+- [@flowercomputers](https://huggingface.co/flowercomputers) on HuggingFace
 
 ### Licensing
 
