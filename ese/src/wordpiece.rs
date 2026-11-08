@@ -68,9 +68,35 @@ pub fn wordpiece_accumulate<E, const D: usize, L>(
     // below would try the whole word first anyway. Its hash is already in
     // `hashes`, so a hit costs one probe and none of the search setup.
     let n = word.len();
+    let found = if n <= cfg.max_token_bytes && n > 0 {
+        lookup(hash)
+    } else {
+        None
+    };
+    accumulate_found(cfg, word, found, pool, lookup, unk);
+}
+
+/// [`wordpiece_accumulate`] for a normal word whose whole-word lookup has
+/// already been done (`found`, ignored when the word cannot be one
+/// vocabulary entry), so a caller can do several words' lookups together.
+#[inline(always)]
+pub fn accumulate_found<E, const D: usize, L>(
+    cfg: &TokenizerConfig,
+    word: &str,
+    found: Option<(&'static [E; D], u8)>,
+    pool: &mut Accumulator<E, D>,
+    lookup: &L,
+    unk: Option<(&'static [E; D], u8)>,
+) where
+    E: Elem,
+    L: Fn(u64) -> Option<(&'static [E; D], u8)>,
+{
+    // Fast path: most words are one vocabulary entry, and the greedy search
+    // would try the whole word first anyway.
+    let n = word.len();
     if n <= cfg.max_token_bytes
         && n > 0
-        && let Some((row, exp)) = lookup(hash)
+        && let Some((row, exp)) = found
     {
         pool.add(row, exp);
         return;

@@ -108,11 +108,72 @@ pub fn encode_uninit<E, const D: usize, L>(
         Some((params.unk, params.unk_exp))
     };
 
-    pretokenizer::for_each_word(&params.tokenizer, text, |word, kind, hash| {
-        wordpiece::wordpiece_accumulate(&params.tokenizer, word, kind, hash, pool, lookup, unk);
-    });
+    let sink = Sink {
+        cfg: &params.tokenizer,
+        lookup,
+        pool: &mut *pool,
+        unk,
+    };
+    pretokenizer::for_each_word(&params.tokenizer, text, sink);
 
     pool.finish_into(out, params.quant_min, params.quant_scale, params.normalize);
+}
+
+/// Feeds pre-tokens to WordPiece and the accumulator.
+struct Sink<'a, E: Elem, const D: usize, L> {
+    cfg: &'a TokenizerConfig,
+    lookup: &'a L,
+    pool: &'a mut accum::Accumulator<E, D>,
+    unk: Option<(&'static [E; D], u8)>,
+}
+
+impl<E, const D: usize, L> pretokenizer::WordSink for Sink<'_, E, D, L>
+where
+    E: Elem,
+    L: Fn(u64) -> Option<(&'static [E; D], u8)>,
+{
+    #[inline(always)]
+    fn word(&mut self, word: &str, kind: pretokenizer::WordKind, hash: u64) {
+        wordpiece::wordpiece_accumulate(
+            self.cfg,
+            word,
+            kind,
+            hash,
+            self.pool,
+            self.lookup,
+            self.unk,
+        );
+    }
+
+    /// All of a block's whole-word lookups first, in a loop with no branches
+    /// on their results, so their dependent loads (seed, then verifier)
+    /// overlap across words; then each word in order.
+    #[inline(always)]
+    fn block_words(&mut self, text: &[u8], tokens: &[pretokenizer::BlockToken]) {
+        let mut found =
+            [MaybeUninit::<Option<(&'static [E; D], u8)>>::uninit(); pretokenizer::BLOCK];
+        for (slot, t) in found.iter_mut().zip(tokens) {
+            slot.write((self.lookup)(t.hash));
+        }
+        for (slot, t) in found.iter().zip(tokens) {
+            // SAFETY: the first `tokens.len()` slots were written above.
+            let found = unsafe { slot.assume_init() };
+            let s = t.start as usize;
+            // SAFETY: block tokens are ASCII.
+            let word = unsafe { core::str::from_utf8_unchecked(&text[s..s + t.len as usize]) };
+            match t.kind {
+                pretokenizer::WordKind::Normal => wordpiece::accumulate_found(
+                    self.cfg,
+                    word,
+                    found,
+                    self.pool,
+                    self.lookup,
+                    self.unk,
+                ),
+                kind => self.word(word, kind, t.hash),
+            }
+        }
+    }
 }
 
 /// Encode one text. See [`encode_into`].
@@ -171,7 +232,7 @@ where
     if inputs.len() >= parallel_min {
         out.par_iter_mut()
             .zip(inputs.par_iter())
-            .with_min_len(16)
+            .with_min_len(32)
             .for_each(|(o, s)| encode_uninit(params, lookup, s.as_ref(), o));
     } else {
         for (o, s) in out.iter_mut().zip(&inputs) {

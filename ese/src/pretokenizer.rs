@@ -18,6 +18,8 @@
 //! token, so a word that overflows the limit is reported as `overlong` and
 //! its remaining characters are not stored.
 
+use core::mem::MaybeUninit;
+
 use ese_unicode::{class, class_of, normalize};
 
 use crate::{TokenizerConfig, phf};
@@ -31,6 +33,44 @@ pub enum WordKind {
     Overlong,
     /// A special token matched literally on the raw input: one exact lookup.
     Literal,
+}
+
+/// A pre-token found inside one block: `len` bytes from `start` of the
+/// block's normalized (ASCII) bytes, with its key hash.
+#[derive(Clone, Copy, Debug)]
+pub struct BlockToken {
+    pub start: u8,
+    pub len: u8,
+    pub kind: WordKind,
+    pub hash: u64,
+}
+
+/// Receives pre-tokens, in input order.
+pub trait WordSink {
+    /// One pre-token; `hash` is its key hash (`phf::hash_key`; 0 for a
+    /// literal special token or an overlong word).
+    fn word(&mut self, word: &str, kind: WordKind, hash: u64);
+
+    /// Consecutive pre-tokens from one block: token `t` is
+    /// `text[t.start..t.start + t.len]`, ASCII. The default hands them to
+    /// [`WordSink::word`] one at a time; a sink can override it to look all
+    /// of them up before using any, so the lookups' memory loads overlap.
+    #[inline(always)]
+    fn block_words(&mut self, text: &[u8], tokens: &[BlockToken]) {
+        for t in tokens {
+            let s = t.start as usize;
+            // SAFETY: block tokens are ASCII.
+            let word = unsafe { core::str::from_utf8_unchecked(&text[s..s + t.len as usize]) };
+            self.word(word, t.kind, t.hash);
+        }
+    }
+}
+
+impl<F: FnMut(&str, WordKind, u64)> WordSink for F {
+    #[inline(always)]
+    fn word(&mut self, word: &str, kind: WordKind, hash: u64) {
+        self(word, kind, hash)
+    }
 }
 
 /// Bytes of stack reserved for one normalized word. Must hold
@@ -120,14 +160,14 @@ impl WordBuf {
     }
 
     #[inline(always)]
-    fn flush<F: FnMut(&str, WordKind, u64)>(&mut self, f: &mut F) {
+    fn flush<F: WordSink>(&mut self, f: &mut F) {
         if self.len > 0 || self.overlong {
             // SAFETY: only whole chars are ever encoded into `buf[..len]`.
             let word = unsafe { core::str::from_utf8_unchecked(&self.buf[..self.len]) };
             if self.overlong {
-                f(word, WordKind::Overlong, 0);
+                f.word(word, WordKind::Overlong, 0);
             } else {
-                f(
+                f.word(
                     word,
                     WordKind::Normal,
                     phf::hash_padded(&self.buf, self.len),
@@ -243,8 +283,9 @@ impl AsciiTable {
     }
 }
 
-/// Bytes classified at a time by [`for_each_word`]'s fast path.
-const BLOCK: usize = 64;
+/// Bytes classified at a time by [`for_each_word`]'s fast path, and so the
+/// most tokens one [`WordSink::block_words`] call can carry.
+pub const BLOCK: usize = 64;
 
 /// One block's classification: bit `j` describes byte `j`. `slow` bytes
 /// (non-ASCII, dropped controls, possible special-token starts) go through
@@ -327,6 +368,23 @@ fn classify(tab: &AsciiTable, b: &[u8; BLOCK], low: &mut [u8; BLOCK + 8]) -> Mas
     m
 }
 
+/// Hand `tokens[..*ntok]` to `f` as one batch and empty it.
+#[inline(always)]
+fn hand_over<F: WordSink>(
+    f: &mut F,
+    low: &[u8],
+    tokens: &[MaybeUninit<BlockToken>; BLOCK],
+    ntok: &mut usize,
+) {
+    if *ntok > 0 {
+        // SAFETY: the caller wrote `tokens[..ntok]`.
+        let ts =
+            unsafe { core::slice::from_raw_parts(tokens.as_ptr() as *const BlockToken, *ntok) };
+        f.block_words(low, ts);
+        *ntok = 0;
+    }
+}
+
 /// Emit the tokens of block bytes `p..cut`, all word bytes, punctuation or
 /// space. A token that starts and ends inside
 /// the range goes straight to `f` from the block's own buffers. Only a word
@@ -335,7 +393,7 @@ fn classify(tab: &AsciiTable, b: &[u8; BLOCK], low: &mut [u8; BLOCK + 8]) -> Mas
 /// at `cut`, so nothing continues past it.
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
-fn fast_segment<F: FnMut(&str, WordKind, u64)>(
+fn fast_segment<F: WordSink>(
     w: &mut WordBuf,
     f: &mut F,
     low: &[u8; BLOCK + 8],
@@ -355,6 +413,10 @@ fn fast_segment<F: FnMut(&str, WordKind, u64)>(
     if w.pending() && (word >> p) & 1 == 0 {
         w.flush(f);
     }
+    // Tokens wholly inside the range are collected and handed over together;
+    // the batch is flushed before anything goes through `w`, to keep order.
+    let mut tokens = [MaybeUninit::<BlockToken>::uninit(); BLOCK];
+    let mut ntok = 0;
     let last = cut - 1;
     while start != 0 {
         let s = start.trailing_zeros() as usize;
@@ -363,30 +425,37 @@ fn fast_segment<F: FnMut(&str, WordKind, u64)>(
         let continues_in = s == p && w.pending();
         let continues_out = e == last && !at_end && (word >> e) & 1 != 0;
         if continues_in || continues_out {
+            hand_over(f, low, &tokens, &mut ntok);
             w.push_run(&low[s..], e - s + 1);
             if !continues_out {
                 w.flush(f);
             }
         } else {
-            let hash = phf::hash_padded(&low[s..], e - s + 1);
-            // SAFETY: fast-path bytes are ASCII.
-            let text = unsafe { core::str::from_utf8_unchecked(&low[s..=e]) };
-            let kind = if e - s + 1 > w.max_chars {
+            let len = e - s + 1;
+            let kind = if len > w.max_chars {
                 WordKind::Overlong
             } else {
                 WordKind::Normal
             };
-            f(text, kind, hash);
+            tokens[ntok].write(BlockToken {
+                start: s as u8,
+                len: len as u8,
+                kind,
+                hash: phf::hash_padded(&low[s..], len),
+            });
+            ntok += 1;
         }
     }
+    hand_over(f, low, &tokens, &mut ntok);
 }
 
-/// Normalize `input` and call `f(word, kind, hashes)` for every pre-token,
-/// in order, where `hashes[i]` is the key hash of `word[..=i]` (empty for a
-/// literal special token). Normalization is BertNormalizer's: `clean_text`,
-/// CJK padding, accent stripping (NFD, drop non-spacing marks), lowercasing,
-/// each gated by its flag. Splitting is BertPreTokenizer's: whitespace separates,
-/// punctuation is isolated. Special tokens are matched literally first.
+/// Normalize `input` and hand every pre-token to `f`, in order: runs of
+/// tokens found inside one block through [`WordSink::block_words`], every
+/// other token through [`WordSink::word`]. Normalization is
+/// BertNormalizer's: `clean_text`, CJK padding, accent stripping (NFD, drop
+/// non-spacing marks), lowercasing, each gated by its flag. Splitting is
+/// BertPreTokenizer's: whitespace separates, punctuation is isolated.
+/// Special tokens are matched literally first.
 ///
 /// Input is classified 64 bytes at a time into bitmasks (see `classify`);
 /// runs of plain ASCII are tokenized from the masks without per-byte
@@ -394,7 +463,7 @@ fn fast_segment<F: FnMut(&str, WordKind, u64)>(
 /// special token) takes the per-character `scalar_step`, after which the
 /// block's masks are reused from the next position.
 #[inline]
-pub fn for_each_word<F: FnMut(&str, WordKind, u64)>(cfg: &TokenizerConfig, input: &str, mut f: F) {
+pub fn for_each_word<F: WordSink>(cfg: &TokenizerConfig, input: &str, mut f: F) {
     let mut word_buf = WordBuf {
         buf: [0; WORD_BUF + 8],
         len: 0,
@@ -452,7 +521,7 @@ pub fn for_each_word<F: FnMut(&str, WordKind, u64)>(cfg: &TokenizerConfig, input
 /// [`classify`] marks slow; on its own, in a loop, it is the whole
 /// pre-tokenizer (the reference the block path is tested against).
 #[inline(never)]
-fn scalar_step<F: FnMut(&str, WordKind, u64)>(
+fn scalar_step<F: WordSink>(
     cfg: &TokenizerConfig,
     input: &str,
     i: usize,
@@ -471,7 +540,7 @@ fn scalar_step<F: FnMut(&str, WordKind, u64)>(
             .max_by_key(|t| t.len())
     {
         w.flush(f);
-        f(t, WordKind::Literal, 0);
+        f.word(t, WordKind::Literal, 0);
         return i + t.len();
     }
     match class & CLASS_MASK {
@@ -487,7 +556,7 @@ fn scalar_step<F: FnMut(&str, WordKind, u64)>(
             w.flush(f);
             // SAFETY: `b` is ASCII.
             let piece = unsafe { core::str::from_utf8_unchecked(&bytes[i..i + 1]) };
-            f(piece, WordKind::Normal, phf::hash_key(&[b]));
+            f.word(piece, WordKind::Normal, phf::hash_key(&[b]));
             i + 1
         }
         CLASS_DROP => i + 1,
@@ -521,12 +590,7 @@ fn scalar_step<F: FnMut(&str, WordKind, u64)>(
 /// Accent stripping and lowercasing of one non-ASCII character, each gated
 /// by its flag, then BertPreTokenizer on every resulting character.
 #[inline(always)]
-fn emit_normalized<F: FnMut(&str, WordKind, u64)>(
-    cfg: &TokenizerConfig,
-    ch: char,
-    w: &mut WordBuf,
-    f: &mut F,
-) {
+fn emit_normalized<F: WordSink>(cfg: &TokenizerConfig, ch: char, w: &mut WordBuf, f: &mut F) {
     if !cfg.strip_accents && !cfg.lowercase {
         emit(ch, w, f);
     } else {
@@ -539,7 +603,7 @@ fn emit_normalized<F: FnMut(&str, WordKind, u64)>(
 /// BertPreTokenizer applied to one normalized character: whitespace ends
 /// the word, punctuation is a word of its own.
 #[inline(always)]
-fn emit<F: FnMut(&str, WordKind, u64)>(ch: char, w: &mut WordBuf, f: &mut F) {
+fn emit<F: WordSink>(ch: char, w: &mut WordBuf, f: &mut F) {
     let (space, punct) = if ch.is_ascii() {
         // Normalization can yield ASCII (U+1FEF decomposes to '`'), and
         // BERT's ASCII punctuation is by range, not category.
@@ -558,7 +622,7 @@ fn emit<F: FnMut(&str, WordKind, u64)>(ch: char, w: &mut WordBuf, f: &mut F) {
         w.flush(f);
         let mut tmp = [0u8; 4];
         let piece = ch.encode_utf8(&mut tmp);
-        f(piece, WordKind::Normal, phf::hash_key(piece.as_bytes()));
+        f.word(piece, WordKind::Normal, phf::hash_key(piece.as_bytes()));
     } else {
         w.push(ch);
     }
@@ -584,7 +648,7 @@ mod tests {
 
     fn words(cfg: &TokenizerConfig, s: &str) -> Vec<(String, WordKind)> {
         let mut v = Vec::new();
-        for_each_word(cfg, s, |w, k, hash| {
+        for_each_word(cfg, s, |w: &str, k: WordKind, hash: u64| {
             if k == WordKind::Normal {
                 // The hash must be exactly what hashing the bytes gives.
                 assert_eq!(hash, phf::hash_key(w.as_bytes()), "{w:?}");
@@ -711,7 +775,9 @@ mod tests {
 
     fn block_words(cfg: &TokenizerConfig, s: &str) -> Vec<(String, WordKind, u64)> {
         let mut v = Vec::new();
-        for_each_word(cfg, s, |w, k, h| v.push((w.to_string(), k, h)));
+        for_each_word(cfg, s, |w: &str, k: WordKind, h: u64| {
+            v.push((w.to_string(), k, h))
+        });
         v
     }
 
