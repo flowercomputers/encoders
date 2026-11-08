@@ -888,7 +888,7 @@ dependencies = [
 
 [[package]]
 name = "ese-unicode"
-version = "17.0.1"
+version = "17.0.2"
 dependencies = [
  "unicode-general-category",
  "unicode-normalization",

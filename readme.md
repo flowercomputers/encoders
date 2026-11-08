@@ -48,7 +48,7 @@ Encoders is fast. To give you an idea of just _how_ fast, here's encoders with i
 
 ```toml
 [dependencies]
-encoders = { version = "2", features = ["bekko-static-v1-slim-32k", "mrl-256", "int8", "rayon"] }
+encoders = { version = "3", features = ["bekko-static-v1-slim-32k", "mrl-256", "int8", "rayon"] }
 ```
 
 ### Features:
@@ -295,7 +295,7 @@ The second shows batched throughput on the answer half (generally much longer in
 
 ### Benchmarks
 
-Benchmarks showing encoders show performance at default model/dtype/mrl (ones labeled rayon enable that feature, too). The charts come from the [`bench`](./bench) crate (Criterion) and its Python companion, [`bench/py`](./bench/py). The benchmark workloads run over questions taken from the [GooAQ](https://huggingface.co/datasets/sentence-transformers/gooaq) dataset. To regenerate charts featured in this repo on your own machine:
+Benchmarks showing encoders show performance at default model/dtype/mrl (ones labeled rayon enable that feature, too). The charts come from the [`bench`](./bench) crate (Criterion) and its Python companion, [`bench/py`](./bench/py). The benchmark workloads run over questions/answers taken from the [GooAQ](https://huggingface.co/datasets/sentence-transformers/gooaq) dataset. To regenerate charts featured in this repo on your own machine:
 
 ```console
 $ uv run --project bench/py bench/py/charts.py

@@ -3,8 +3,9 @@ name = "ese-unicode"
 # MAJOR.MINOR is the Unicode version the tables implement (Unicode's own
 # third component is always 0); PATCH is for changes to this crate within
 # that Unicode version. `tests/reference.rs` checks the tables agree.
-version = "17.0.1"
+version = "17.0.2"
 edition = "2024"
+rust-version = "1.88"
 description = "Character classes and BERT-style normalization (NFD minus nonspacing marks, lowercasing) from compact precomputed tables (about 64 KB)"
 license = "Apache-2.0"
 repository = "https://github.com/flowercomputers/encoders"

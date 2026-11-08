@@ -2,6 +2,7 @@
 name = "encoders"
 version = "3.0.0"
 edition = "2024"
+rust-version = "1.88"
 description = "The fastest way to semantically embed text inputs"
 readme = "readme.md"
 license-file = "license"
