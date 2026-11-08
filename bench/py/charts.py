@@ -46,8 +46,8 @@ THROUGHPUT_LABELS = {
 }
 # encoders is built with model2vec-rs's model (potion-base-8M, float32) here.
 CORPUS_LABELS = {
-    "encoders": "encoders\npotion-base-8M",
-    "encoders-rayon": "encoders (rayon)\npotion-base-8M",
+    "encoders": "encoders\n",
+    "encoders-rayon": "encoders\n(rayon)",
     "model2vec-rs": "model2vec-rs\npotion-base-8M",
     "minishlab/potion-base-8M": "python\npotion-base-8M",
     "sentence-transformers/all-MiniLM-L6-v2": "python\nall-MiniLM-L6-v2",
@@ -126,9 +126,9 @@ def run_rust_benches():
     runs = [
         ("throughput", ""),
         ("throughput", "rayon"),
-        ("queries", "potion-base-8m"),
-        ("corpus", "potion-base-8m"),
-        ("corpus", "potion-base-8m,rayon"),
+        ("queries", ""),
+        ("corpus", ""),
+        ("corpus", "rayon"),
     ]
     for bench, features in runs:
         extra = ["--features", features] if features else []

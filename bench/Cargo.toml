@@ -22,10 +22,6 @@ publish = false
 # parallel). The comparison bars are skipped in this build; run it after the
 # default one and both ids land in criterion's results.
 rayon = ["encoders/rayon"]
-# Compile encoders with model2vec-rs's default model, unquantized, so the
-# `queries` and `corpus` benches compare the two crates on the same weights.
-# Both benches refuse to run without it.
-potion-base-8m = ["encoders/potion-base-8m", "encoders/float32"]
 
 [dev-dependencies]
 encoders = { path = ".." }
