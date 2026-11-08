@@ -327,11 +327,12 @@ fn selected_dims(model: &ModelSpec) -> Option<usize> {
 /// feature only states that choice explicitly; `int8` and `float32`
 /// together is a contradiction.
 fn selected_quant() -> Quant {
-    match (feature_on("int8"), feature_on("float32")) {
-        (true, true) => panic!("encoders: int8 and float32 are mutually exclusive"),
-        (true, false) => Quant::U8,
+    match (feature_on("int16"), feature_on("float32")) {
+        (true, true) => panic!("encoders: int16 and float32 are mutually exclusive"),
+        (true, false) => Quant::U16,
         (false, true) => Quant::F32,
-        (false, false) => Quant::U16,
+        // default to int8 quantization
+        (false, false) => Quant::U8,
     }
 }
 

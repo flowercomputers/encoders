@@ -1,6 +1,6 @@
 [package]
 name = "encoders"
-version = "2.0.0"
+version = "2.0.1"
 edition = "2024"
 description = "The fastest way to semantically embed text inputs"
 readme = "readme.md"
@@ -17,7 +17,7 @@ categories = [
     "science",
 ]
 build = "build.rs"
-exclude = ["bench/", ".github/", "todo.md"]
+exclude = ["bench/", ".github/"]
 
 [workspace]
 resolver = "2"
