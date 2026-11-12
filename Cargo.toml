@@ -1,6 +1,6 @@
 [package]
 name = "encoders"
-version = "3.0.0"
+version = "3.0.1"
 edition = "2024"
 rust-version = "1.88"
 description = "The fastest way to semantically embed text inputs"
@@ -40,6 +40,7 @@ bekko-static-v1-slim-32k = []
 bekko-static-embedding-v1 = []
 static-retrieval-mrl-en-v1 = []
 static-similarity-mrl-multilingual-v1 = []
+lattice-retrieval = []
 potion-base-2m = []
 potion-base-4m = []
 potion-base-8m = []
@@ -48,13 +49,15 @@ potion-retrieval-32m = []
 potion-science-8m = []
 potion-science-32m = []
 potion-code-16m = []
+blink-8m = []
 nife-mxbai-embed-large-v1 = []
 nife-gte-modernbert-base = []
 m2v-base-output = []
 
-# Truncation. Only Matryoshka-trained models (the bekko family and the
-# static-*-mrl models) accept a width below their native one, and only a
-# width they were trained at; the build fails otherwise.
+# Truncation. Only Matryoshka-trained models (the bekko family, the
+# static-*-mrl models and lattice-retrieval) accept a width below their
+# native one, and only a width they were trained at; the build fails
+# otherwise.
 mrl-1024 = []
 mrl-768 = []
 mrl-512 = []
