@@ -122,7 +122,39 @@ The model [hotchpotch/bekko-static-embedding-v1](https://huggingface.co/hotchpot
 Our smallest model, `bekko-static-v1-slim-32k`, covers English, Arabic, German, Spanish, French, Italian, Japanese, Korean, Norwegian, Portuguese, Serbian, Swedish, Thai, and Vietnamese. The larger models also support Bengali, Persian, Finnish, Hindi, Indonesian, Dutch, Russian, Swahili, Telugu, Yoruba, and Chinese.
 
 <details>
-<summary><b>Potion models</b></summary>
+<summary><h4>NIFE (Nearly Inference Free Embeddings)</h4></summary>
+
+Static models aligned with a transformer teacher, so an index built with the teacher can be queried with the static model. English language only, licensed MIT.
+
+<table>
+  <thead>
+    <tr>
+      <th>feature</th>
+      <th align="right">native width</th>
+      <th>teacher</th>
+      <th align="right">size int8 / int16 / f32</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><a href="https://huggingface.co/stephantulkens/NIFE-mxbai-embed-large-v1"><code>nife-mxbai-embed-large-v1</code></a></td>
+      <td align="right">1024</td>
+      <td><a href="https://huggingface.co/mixedbread-ai/mxbai-embed-large-v1">mixedbread-ai/mxbai-embed-large-v1</a></td>
+      <td align="right">108 / 214 / 427 MiB</td>
+    </tr>
+    <tr>
+      <td><a href="https://huggingface.co/stephantulkens/NIFE-gte-modernbert-base"><code>nife-gte-modernbert-base</code></a></td>
+      <td align="right">768</td>
+      <td><a href="https://huggingface.co/Alibaba-NLP/gte-modernbert-base">Alibaba-NLP/gte-modernbert-base</a></td>
+      <td align="right">75 / 149 / 297 MiB</td>
+    </tr>
+  </tbody>
+</table>
+<hr />
+</details>
+
+<details>
+<summary><h4>MinishLab models</h4></summary>
 
 Small, quick models distilled by [MinishLab](https://github.com/MinishLab) with their [model2vec](https://github.com/MinishLab/model2vec) process: English only, licensed MIT.
 
@@ -136,6 +168,12 @@ Small, quick models distilled by [MinishLab](https://github.com/MinishLab) with 
     </tr>
   </thead>
   <tbody>
+    <tr>
+        <td><a href="https://huggingface.co/minishlab/blink-8M"><code>blink-8m</code></a></td>
+        <td align="right">256</td>
+        <td>general purpose, successor to <code>potion-base-8m</code></td>
+        <td align="right">7.7 / 15 / 30 MiB</td>
+    </tr>
     <tr>
       <td><a href="https://huggingface.co/minishlab/potion-base-2M"><code>potion-base-2m</code></a></td>
       <td align="right">64</td>
@@ -192,11 +230,17 @@ Small, quick models distilled by [MinishLab](https://github.com/MinishLab) with 
     </tr>
   </tbody>
 </table>
-
+<hr />
 </details>
 
 <details>
-<summary><b>sentence-transformers static models</b></summary>
+<summary><h4>Other models</h4></summary>
+
+We try to cover the spread as far as static embedding models, but if you have a static embedding model not yet included in this crate, please let us know! We are happy to add support for it.
+
+Otherwise, check out the [`ese-build`](./ese-build) and [`ese`](./ese) crates, which can be used to deploy private and local models.
+
+<h5>sentence-transformers static models</h5>
 
 Trained by the [sentence-transformers](https://sbert.net) team with Matryoshka loss (see their [write-up](https://huggingface.co/blog/static-embeddings)), licensed Apache-2.0.
 
@@ -222,47 +266,28 @@ Trained by the [sentence-transformers](https://sbert.net) team with Matryoshka l
   </tbody>
 </table>
 
-</details>
+<h5>Lattice</h5>
 
-<details>
-<summary><b>NIFE (Nearly Inference Free Embeddings)</b></summary>
-
-Static models aligned with a transformer teacher, so an index built with the teacher can be queried with the static model. English language only, licensed MIT.
+Trained by [Erik Kaunismäki](https://github.com/ErikKaum/lattice) with Matryoshka loss, building on `static-retrieval-mrl-en-v1`'s recipe: English only, licensed MIT.
 
 <table>
   <thead>
     <tr>
       <th>feature</th>
-      <th align="right">native width</th>
-      <th>teacher</th>
+      <th>notes</th>
       <th align="right">size int8 / int16 / f32</th>
     </tr>
   </thead>
   <tbody>
     <tr>
-      <td><a href="https://huggingface.co/stephantulkens/NIFE-mxbai-embed-large-v1"><code>nife-mxbai-embed-large-v1</code></a></td>
-      <td align="right">1024</td>
-      <td><a href="https://huggingface.co/mixedbread-ai/mxbai-embed-large-v1">mixedbread-ai/mxbai-embed-large-v1</a></td>
-      <td align="right">108 / 214 / 427 MiB</td>
-    </tr>
-    <tr>
-      <td><a href="https://huggingface.co/stephantulkens/NIFE-gte-modernbert-base"><code>nife-gte-modernbert-base</code></a></td>
-      <td align="right">768</td>
-      <td><a href="https://huggingface.co/Alibaba-NLP/gte-modernbert-base">Alibaba-NLP/gte-modernbert-base</a></td>
-      <td align="right">75 / 149 / 297 MiB</td>
+      <td><a href="https://huggingface.co/erikkaum/lattice-retrieval"><code>lattice-retrieval</code></a></td>
+      <td>English, tuned for retrieval</td>
+      <td align="right">30 / 61 / 121 MiB</td>
     </tr>
   </tbody>
 </table>
 
-</details>
-
-<details>
-<summary><b>Other models</b></summary>
-
-We try to cover the spread as far as static embedding models, but if you have a static embedding model not yet included in this crate, please let us know! We are happy to add support for it.
-
-Otherwise, check out the [`ese-build`](./ese-build) and [`ese`](./ese) crates, which can be used to deploy private and local models.
-
+<hr />
 </details>
 
 ## Methodology
