@@ -24,10 +24,16 @@
 //! - `int16` or `float32`: how the table is stored. With neither, it is
 //!   `int8`.
 //! - `rayon`: [`encode`] goes parallel from [`PARALLEL_MIN`] texts.
+//! - `std` (on by default): link the standard library. Without it the crate
+//!   is `no_std`; [`encode_single`] and [`encode_into`] need no allocator,
+//!   and the batch [`encode`] is only present with `alloc` (which `std`
+//!   implies).
 //!
 //! [`encode_single`], [`encode`] and [`encode_into`] produce embeddings;
 //! [`similarity`] (cosine) and [`distance`] (Euclidean) compare them;
 //! [`DIMENSIONS`] gives you the size of output vectors per input.
+
+#![cfg_attr(not(any(feature = "std", test)), no_std)]
 
 ese::include_model!();
 
