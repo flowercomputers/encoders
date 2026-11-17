@@ -1,6 +1,8 @@
 //! Re-derives every table entry from the reference crates and, for
-//! lowercase forms and whitespace, the standard library, so it needs a
-//! toolchain whose `char::UNICODE_VERSION` matches the tables'.
+//! lowercase forms and whitespace, the standard library. The standard
+//! library's half only means something on a toolchain whose
+//! `char::UNICODE_VERSION` matches the tables'; on any other it is skipped
+//! (CI pins a matching toolchain for this test, see `.github/workflows/ci.yml`).
 
 use ese_unicode::{class, class_of, normalize};
 use unicode_general_category::{GeneralCategory, get_general_category};
@@ -18,6 +20,17 @@ fn strip(c: char) -> String {
 
 #[test]
 fn every_code_point_matches_the_reference_crates() {
+    // Lowercase forms and whitespace come from the standard library, which
+    // tracks the latest Unicode; the tables are pinned.
+    let std_matches = char::UNICODE_VERSION == ese_unicode::UNICODE_VERSION;
+    if !std_matches {
+        eprintln!(
+            "skipping the standard-library checks: this toolchain implements Unicode {:?}, \
+             the tables {:?}",
+            char::UNICODE_VERSION,
+            ese_unicode::UNICODE_VERSION
+        );
+    }
     for cp in 0..=0x10FFFFu32 {
         let Some(c) = char::from_u32(cp) else {
             continue;
@@ -32,11 +45,13 @@ fn every_code_point_matches_the_reference_crates() {
             ),
             "{cp:#x} control"
         );
-        assert_eq!(
-            k & class::WHITESPACE != 0,
-            c.is_whitespace(),
-            "{cp:#x} whitespace"
-        );
+        if std_matches {
+            assert_eq!(
+                k & class::WHITESPACE != 0,
+                c.is_whitespace(),
+                "{cp:#x} whitespace"
+            );
+        }
         assert_eq!(
             k & class::PUNCTUATION != 0,
             matches!(
@@ -64,12 +79,14 @@ fn every_code_point_matches_the_reference_crates() {
 
         let ident = c.to_string();
         let st = strip(c);
-        let lo: String = c.to_lowercase().collect();
-        let sl: String = st.chars().flat_map(char::to_lowercase).collect();
         assert_eq!(&*normalize(c, false, false), ident, "{cp:#x} identity");
         assert_eq!(&*normalize(c, true, false), st, "{cp:#x} strip");
-        assert_eq!(&*normalize(c, false, true), lo, "{cp:#x} lower");
-        assert_eq!(&*normalize(c, true, true), sl, "{cp:#x} strip+lower");
+        if std_matches {
+            let lo: String = c.to_lowercase().collect();
+            let sl: String = st.chars().flat_map(char::to_lowercase).collect();
+            assert_eq!(&*normalize(c, false, true), lo, "{cp:#x} lower");
+            assert_eq!(&*normalize(c, true, true), sl, "{cp:#x} strip+lower");
+        }
     }
 }
 

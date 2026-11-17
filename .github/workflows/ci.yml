@@ -66,7 +66,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo test -p ese -p ese-build --features ese-build/test-data
-      - run: cargo test -p ese-unicode --release
+      # The ese-unicode tables are Unicode 17 and their reference test compares
+      # against the standard library, so it runs on the last toolchain whose
+      # standard library is Unicode 17 (1.100 moved to 18). Raise this together
+      # with the tables.
+      - run: rustup toolchain install 1.99 --profile minimal
+      - run: cargo +1.99 test -p ese-unicode --release
 
   encoders:
     name: encoders (${{ matrix.features }}, ${{ matrix.os }})
