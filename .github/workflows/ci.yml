@@ -53,7 +53,7 @@ jobs:
         with:
           path: .ese-models
           key: ese-models-${{ hashFiles('build.rs') }}
-      - run: cargo doc --workspace --exclude ese-py --no-deps --no-default-features --features "$SMALL"
+      - run: cargo doc --workspace --exclude ese-py --no-deps --no-default-features --features "$SMALL,std"
 
   libs:
     name: ese / ese-build / ese-unicode tests
@@ -97,6 +97,27 @@ jobs:
           else
             cargo test --no-default-features --features "tests,rayon,${{ matrix.features }}"
           fi
+
+  no-std:
+    name: no_std build (thumbv7em-none-eabihf)
+    runs-on: ubuntu-latest
+    env:
+      # .cargo/config.toml asks for target-cpu=native, which means the host
+      # CPU and is wrong for a cross build.
+      RUSTFLAGS: ""
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: thumbv7em-none-eabihf
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/cache@v4
+        with:
+          path: .ese-models
+          key: ese-models-${{ hashFiles('build.rs') }}
+      - run: cargo build -p encoders --target thumbv7em-none-eabihf --no-default-features --features "$SMALL"
+      - run: cargo build -p encoders --target thumbv7em-none-eabihf --no-default-features --features "$SMALL,alloc"
+      - run: cargo test -p ese --no-default-features
 
   package:
     name: publish dry run
