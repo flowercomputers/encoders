@@ -84,7 +84,7 @@ rayon = ["std", "ese/rayon"]
 tests = ["ese-build/test-data"]
 
 [dependencies]
-ese = { version = "0.3.0", path = "ese", default-features = false }
+ese = { version = "0.4.0", path = "ese", default-features = false }
 
 [build-dependencies]
-ese-build = { version = "0.3.0", path = "ese-build" }
+ese-build = { version = "0.4.0", path = "ese-build" }
