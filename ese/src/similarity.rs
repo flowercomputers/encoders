@@ -32,7 +32,7 @@ pub fn dot(a: &[f32], b: &[f32]) -> f32 {
 /// `‖a‖₂`.
 #[inline]
 pub fn norm(a: &[f32]) -> f32 {
-    lanes(a, a, |x, y| x * y).sqrt()
+    crate::sqrt(lanes(a, a, |x, y| x * y))
 }
 
 /// Cosine similarity, 0 if either vector is zero.
@@ -45,7 +45,7 @@ pub fn cosine(a: &[f32], b: &[f32]) -> f32 {
 /// `‖a − b‖₂`.
 #[inline]
 pub fn euclidean(a: &[f32], b: &[f32]) -> f32 {
-    lanes(a, b, |x, y| (x - y) * (x - y)).sqrt()
+    crate::sqrt(lanes(a, b, |x, y| (x - y) * (x - y)))
 }
 
 #[cfg(test)]

@@ -274,7 +274,7 @@ impl<E: Elem, const D: usize> Accumulator<E, D> {
         // SAFETY: every lane was written above.
         let out = unsafe { out.assume_init_mut() };
         if normalize {
-            let norm = sq.iter().sum::<f32>().sqrt();
+            let norm = crate::sqrt(sq.iter().sum::<f32>());
             if norm > 0.0 {
                 let inv = 1.0 / norm;
                 for v in out.iter_mut() {

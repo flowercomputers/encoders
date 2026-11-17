@@ -17,8 +17,25 @@
 //! matching of special added tokens typed into the input, followed by mean
 //! pooling with `add_special_tokens=false`, which is what both
 //! sentence-transformers' `StaticEmbedding` and model2vec do.
+//!
+//! # `no_std`
+//!
+//! The `std` feature is on by default. Without it the crate is `no_std`:
+//! [`encode_single`], [`encode_into`] and [`encode_uninit`] need no
+//! allocator (they work in fixed stack buffers, roughly 10 KB plus two
+//! embeddings' worth), and square roots come from `libm`. The batch
+//! [`encode`] returns a `Vec` and needs the `alloc` feature, which `std`
+//! implies; `rayon` implies `std`.
+
+#![cfg_attr(not(any(feature = "std", test)), no_std)]
+
+#[cfg(feature = "alloc")]
+extern crate alloc;
 
 use core::mem::MaybeUninit;
+
+#[cfg(feature = "alloc")]
+use alloc::vec::Vec;
 
 mod elem;
 
@@ -29,6 +46,44 @@ pub mod similarity;
 pub mod wordpiece;
 
 pub use elem::Elem;
+
+/// `f32::sqrt`, which `core` does not have.
+#[cfg(feature = "std")]
+#[inline(always)]
+pub(crate) fn sqrt(x: f32) -> f32 {
+    x.sqrt()
+}
+
+/// `f32::sqrt`, which `core` does not have.
+#[cfg(not(feature = "std"))]
+#[inline(always)]
+pub(crate) fn sqrt(x: f32) -> f32 {
+    libm::sqrtf(x)
+}
+
+/// Used by [`include_model!`]; not part of the public API.
+#[doc(hidden)]
+pub mod __private {
+    #[cfg(feature = "alloc")]
+    pub use alloc::vec::Vec;
+}
+
+/// Expands to its input when the `alloc` feature of `ese` is on, and to
+/// nothing otherwise. A `#[cfg]` written inside [`include_model!`] would test
+/// the invoking crate's features instead.
+#[cfg(feature = "alloc")]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __if_alloc {
+    ($($item:item)*) => { $($item)* };
+}
+
+#[cfg(not(feature = "alloc"))]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __if_alloc {
+    ($($item:item)*) => {};
+}
 
 /// The `BertNormalizer` / `WordPiece` parameters read from `tokenizer.json`.
 #[derive(Clone, Copy, Debug)]
@@ -208,6 +263,7 @@ where
 
 /// Uninitialized storage for `n` embeddings, and the final cast once every
 /// slot has been written.
+#[cfg(feature = "alloc")]
 fn uninit_vec<const D: usize>(n: usize) -> Vec<MaybeUninit<[f32; D]>> {
     let mut v = Vec::with_capacity(n);
     // SAFETY: `MaybeUninit` needs no initialization and capacity is `n`.
@@ -217,6 +273,7 @@ fn uninit_vec<const D: usize>(n: usize) -> Vec<MaybeUninit<[f32; D]>> {
 
 /// # Safety
 /// Every element of `v` must have been written.
+#[cfg(feature = "alloc")]
 unsafe fn assume_init_vec<const D: usize>(v: Vec<MaybeUninit<[f32; D]>>) -> Vec<[f32; D]> {
     let mut v = core::mem::ManuallyDrop::new(v);
     // SAFETY: same layout and allocation; the caller guarantees initialization.
@@ -259,7 +316,7 @@ where
 /// Encode a batch of texts. Each embedding is written once, straight into
 /// the returned vector. `parallel_min` is the batch size from which the
 /// `rayon` build would go parallel; unused here.
-#[cfg(not(feature = "rayon"))]
+#[cfg(all(feature = "alloc", not(feature = "rayon")))]
 pub fn encode<E, const D: usize, L, I>(
     params: &ModelParams<E, D>,
     lookup: &L,
@@ -291,7 +348,8 @@ where
 /// - `pub const DIMENSIONS: usize`;
 /// - `pub fn encode_single(impl AsRef<str>) -> [f32; DIMENSIONS]`;
 /// - `pub fn encode_into(impl AsRef<str>, &mut [f32; DIMENSIONS])`;
-/// - `pub fn encode(impl IntoIterator<Item: AsRef<str> + Send + Sync>) -> Vec<[f32; DIMENSIONS]>`;
+/// - `pub fn encode(impl IntoIterator<Item: AsRef<str> + Send + Sync>) -> Vec<[f32; DIMENSIONS]>`
+///   (only with the `alloc` feature of `ese`, which `std` implies);
 /// - `pub const PARALLEL_MIN: usize`, the batch size from which `encode` goes
 ///   parallel with the `rayon` feature;
 /// - `similarity` / `distance` on two embeddings.
@@ -418,12 +476,15 @@ macro_rules! include_model {
         /// the `rayon` feature of `ese` is on.
         pub const PARALLEL_MIN: usize = model::PARALLEL_MIN;
 
-        /// Encode a batch of texts. With the `rayon` feature of `ese` enabled,
-        /// batches of [`PARALLEL_MIN`] or more are processed in parallel.
-        pub fn encode(
-            inputs: impl IntoIterator<Item = impl AsRef<str> + Send + Sync>,
-        ) -> Vec<[f32; DIMENSIONS]> {
-            $crate::encode(&model::PARAMS, &model::lookup_hash, PARALLEL_MIN, inputs)
+        $crate::__if_alloc! {
+            /// Encode a batch of texts. With the `rayon` feature of `ese` enabled,
+            /// batches of [`PARALLEL_MIN`] or more are processed in parallel.
+            /// Needs the `alloc` feature of `ese` (implied by `std`).
+            pub fn encode(
+                inputs: impl IntoIterator<Item = impl AsRef<str> + Send + Sync>,
+            ) -> $crate::__private::Vec<[f32; DIMENSIONS]> {
+                $crate::encode(&model::PARAMS, &model::lookup_hash, PARALLEL_MIN, inputs)
+            }
         }
 
         /// Similarity of two embeddings in `[-1, 1]`: cosine similarity, or
