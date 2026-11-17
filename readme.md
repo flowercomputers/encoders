@@ -43,7 +43,7 @@ Encoders is fast. To give you an idea of just _how_ fast, here's encoders with i
 ## Configuration and model selection
 
 > [!WARNING]
-> If you store embeddings from this crate, you should explicitly [select model, quantization, and dimension features](https://github.com/flowercomputers/encoders/blob/master/Cargo.toml#L30-L68)!
+> If you store embeddings from this crate, you should explicitly [select model, quantization, and dimension features](https://github.com/flowercomputers/encoders/blob/master/Cargo.toml#L31-L79)!
 > _**We will change the default model and features between major versions**_ as better models become available!
 
 ```toml
@@ -57,6 +57,7 @@ encoders = { version = "3", features = ["bekko-static-v1-slim-32k", "mrl-256", "
 - **Dimensions.** `mrl-1024` down to `mrl-32` truncates a Matryoshka-trained model to one of the widths it was trained at. Omit it for the model's native width; asking for a width a model was not trained at fails the build!
 - **Internal Type.** `int8` is the default: a quarter the size of f32, with cosine agreement against f32 above 0.999 on multi-token text (so pretty much indistinguishable in practice). `int16` is half the size of f32 and closer still, and `float32` stores the weights unquantized.
 - **`rayon`** makes `encode` parallel for large batches. This is only likely to improve performance if your workload is routinely encoding very large batches (a couple hundred or more inputs).
+- **`std`/`alloc`** (default). Turn these off (`default-features = false`) to build this crate for `no_std` environments: you can enable the `alloc` feature without `std` to re-enable batch embedding if available; `encode_single` and `encode_into` are available otherwise.
 
 #### bekko models
 

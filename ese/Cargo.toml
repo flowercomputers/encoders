@@ -12,8 +12,18 @@ categories = ["text-processing", "artificial-intelligence", "compression", "enco
 rust-version = "1.88"
 
 [features]
-rayon = ["dep:rayon"]
+default = ["std"]
+# Link the standard library. Without it the crate is `no_std`: the
+# single-text entry points need neither an allocator nor an OS, and square
+# roots come from `libm` instead of the platform's.
+std = ["alloc"]
+# The batch `encode`, which returns a `Vec`. Implied by `std`; enable it on
+# its own for a `no_std` target that has a global allocator.
+alloc = []
+rayon = ["dep:rayon", "std"]
 
 [dependencies]
 ese-unicode = { version = "17.0.0", path = "../ese-unicode" }
+# Only called without `std` (for `sqrtf`).
+libm = { version = "0.2", default-features = false }
 rayon = { version = "1", optional = true }

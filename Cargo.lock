@@ -864,6 +864,7 @@ name = "ese"
 version = "0.3.0"
 dependencies = [
  "ese-unicode",
+ "libm",
  "rayon",
 ]
 
